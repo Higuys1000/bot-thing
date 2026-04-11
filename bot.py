@@ -6,6 +6,7 @@ import os
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.reactions = True  # REQUIRED for reaction events
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -21,8 +22,6 @@ ROLE_COOLDOWNS = {
     "Good Moderator Morning!": 0
 }
 
-ALLOWED_ROLES = list(ROLE_COOLDOWNS.keys())
-
 last_used = {}
 
 @bot.event
@@ -35,6 +34,7 @@ async def on_message(message):
         return
 
     if not message.reference or TARGET_GIF not in message.content:
+        await bot.process_commands(message)
         return
 
     replied_message = await message.channel.fetch_message(message.reference.message_id)
@@ -75,11 +75,35 @@ async def on_message(message):
         last_used[message.author.id] = now
 
         await message.channel.send(
-            f"{member_to_timeout.mention} has been timed out for {TIMEOUT_SECONDS}s by {message.author.mention}) lmao"
+            f"{member_to_timeout.mention} has been timed out for {TIMEOUT_SECONDS}s by {message.author.mention} lmao"
         )
 
     except Exception as e:
         await message.channel.send(
             f"Failed to timeout {member_to_timeout.mention}: {e}"
         )
+
+    await bot.process_commands(message)  # allow commands to still work
+
+
+@bot.event
+async def on_reaction_add(reaction, user):
+    if user.bot:
+        return
+
+    emoji_map = {
+        "🫃": "MPREG",
+        "🤰": "WPREG",
+        "🧑‍🍼": "PREG"
+    }
+
+    emoji_str = str(reaction.emoji)
+
+    if emoji_str in emoji_map:
+        label = emoji_map[emoji_str]
+        await reaction.message.channel.send(
+            f"{user.mention} JUST USED {label} EMOJI GO KILL THEM"
+        )
+
+
 bot.run(os.getenv("TOKEN"))

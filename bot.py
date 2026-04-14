@@ -10,7 +10,7 @@ intents.reactions = True  # REQUIRED for reaction events
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-TARGET_GIF = "https://klipy.com/gifs/drmanhattan-watchman"
+TARGET_GIF = "https://media.tenor.com/J2eH8lztN0cAAAPo/jujutsu-kaisen-inumaki.mp4"
 TIMEOUT_SECONDS = 60
 
 # Role-based cooldowns (in hours)

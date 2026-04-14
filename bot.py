@@ -14,7 +14,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 TARGET_GIFS = [
     "https://tenor.com/view/jujutsu-kaisen-inumaki-toge-toge-inumaki-inumaki-toge-gif-2839387565091272519",
     "https://klipy.com/gifs/drmanhattan-watchman",
-    "https://tenor.com/view/gaganaru-gagamaru-gin-gagamaru-naruhaya-naruhaya-asahi-gif-4367509809256626385"
+    "https://klipy.com/gifs/blue-lock-gagamaru"
 ]
 
 TIMEOUT_SECONDS = 60

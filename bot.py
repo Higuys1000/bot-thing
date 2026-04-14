@@ -10,7 +10,7 @@ intents.reactions = True  # REQUIRED for reaction events
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-TARGET_GIF = "https://media.tenor.com/J2eH8lztN0cAAAPo/jujutsu-kaisen-inumaki.mp4"
+TARGET_GIF = "https://images-ext-1.discordapp.net/external/EPWUwXLSENnpsmmfyBepC8LEP7a-Q1l3St-XBNm3lzc/https/media.tenor.com/J2eH8lztN0cAAAPo/jujutsu-kaisen-inumaki.mp4"
 TIMEOUT_SECONDS = 60
 
 # Role-based cooldowns (in hours)

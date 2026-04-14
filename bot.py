@@ -6,14 +6,19 @@ import os
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-intents.reactions = True  # REQUIRED for reaction events
+intents.reactions = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-TARGET_GIF = "https://tenor.com/view/jujutsu-kaisen-inumaki-toge-toge-inumaki-inumaki-toge-gif-2839387565091272519"
+# MULTIPLE GIFS
+TARGET_GIFS = [
+    "https://tenor.com/view/jujutsu-kaisen-inumaki-toge-toge-inumaki-inumaki-toge-gif-2839387565091272519",
+    "https://klipy.com/gifs/drmanhattan-watchman",
+    "https://tenor.com/view/gaganaru-gagamaru-gin-gagamaru-naruhaya-naruhaya-asahi-gif-4367509809256626385"
+]
+
 TIMEOUT_SECONDS = 60
 
-# Role-based cooldowns (in hours)
 ROLE_COOLDOWNS = {
     "Bum": 18,
     "Rat": 9,
@@ -33,18 +38,17 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    if not message.reference or TARGET_GIF not in message.content:
+    # Check if message is a reply AND contains ANY target GIF
+    if not message.reference or not any(gif in message.content for gif in TARGET_GIFS):
         await bot.process_commands(message)
         return
 
     replied_message = await message.channel.fetch_message(message.reference.message_id)
     member_to_timeout = message.guild.get_member(replied_message.author.id)
 
-    # Get user's valid roles
     author_roles = [role.name for role in message.author.roles]
     valid_roles = [r for r in author_roles if r in ROLE_COOLDOWNS]
 
-    # No valid role → deny
     if not valid_roles:
         await message.channel.send(
             f"{message.author.mention}, you don't have permission to use this GIF!"
@@ -58,7 +62,6 @@ async def on_message(message):
     now = datetime.utcnow()
     last = last_used.get(message.author.id)
 
-    # Cooldown check (skip if 0)
     if cooldown_hours > 0 and last:
         if now - last < timedelta(hours=cooldown_hours):
             remaining = timedelta(hours=cooldown_hours) - (now - last)
@@ -83,7 +86,7 @@ async def on_message(message):
             f"Failed to timeout {member_to_timeout.mention}: {e}"
         )
 
-    await bot.process_commands(message)  # allow commands to still work
+    await bot.process_commands(message)
 
 
 @bot.event

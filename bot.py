@@ -24,8 +24,8 @@ ROLE_COOLDOWNS = {
     "Rat": 9,
     "Chud": 4,
     "Otis BFF ❤️": 4,
+    "Shit Ass Mod": 0,
     "Good Moderator Morning!": 0
-    "Shit Ass Mod": 0
 }
 
 last_used = {}

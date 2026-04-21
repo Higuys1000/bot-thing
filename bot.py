@@ -15,11 +15,18 @@ TARGET_GIFS = [
     "https://tenor.com/view/jujutsu-kaisen-inumaki-toge-toge-inumaki-inumaki-toge-gif-2839387565091272519",
     "https://klipy.com/gifs/drmanhattan-watchman",
     "https://klipy.com/gifs/blue-lock-gagamaru",
-    "https://tenor.com/view/jjk-jujutsu-kaisen-jjk-fight-jujutsu-kaisen-fight-yuji-itadori-gif-13410355612590763521"
+    "https://tenor.com/view/jjk-jujutsu-kaisen-jjk-fight-jujutsu-kaisen-fight-yuji-itadori-gif-13410355612590763521",
+    "https://tenor.com/view/toji-kick-gif-12937973716924321908"
+    "https://tenor.com/view/toji-kick-gif-12937973716924321908"
+    "https://tenor.com/view/nanami-shigemo-jjk-jujutsu-kaisen-jjk-season-2-gif-9821210930918976877"
 ]
 
-# UNTIMEOUT GIF
-UNTIMEOUT_GIF = "https://tenor.com/view/doctor-manhattan-watchmen-marvel-gif-21030500"
+UNTIMEOUT_GIFS = [
+    "https://tenor.com/view/doctor-manhattan-watchmen-marvel-gif-21030500",
+    "https://klipy.com/gifs/doctor-manhattan-watchmen"
+    "https://tenor.com/view/revive-gif-23866294"
+    "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664"
+]
 
 TIMEOUT_SECONDS = 90
 
@@ -51,7 +58,7 @@ async def on_message(message):
     content = message.content
 
     # Check if it's any relevant GIF
-    if not (any(gif in content for gif in TARGET_GIFS) or UNTIMEOUT_GIF in content):
+    if not (any(gif in content for gif in TARGET_GIFS) or any(gif in content for gif in UNTIMEOUT_GIFS)):
         await bot.process_commands(message)
         return
 
@@ -90,7 +97,7 @@ async def on_message(message):
     # =========================
     # UNTIMEOUT LOGIC
     # =========================
-    if UNTIMEOUT_GIF in content:
+    if any(gif in content for gif in UNTIMEOUT_GIFS):
         if not member_to_timeout.timed_out_until:
             await message.channel.send("They're not even timed out bro 💀")
             return

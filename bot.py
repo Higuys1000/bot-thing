@@ -59,7 +59,7 @@ async def on_message(message):
 
         if not valid_roles:
             await message.channel.send(
-                f"{message.author.mention}, you don't have any cooldown role."
+                f"{message.author.mention}, you have to get to level 25 to use me!"
             )
             return
 
@@ -71,13 +71,13 @@ async def on_message(message):
 
         if cooldown_hours == 0:
             await message.channel.send(
-                f"{message.author.mention}, ({best_role}) you have no cooldown 😈"
+                f"{message.author.mention}, ({best_role}) you have no cooldown you're a mod lol"
             )
             return
 
         if not last or now - last >= timedelta(hours=cooldown_hours):
             await message.channel.send(
-                f"{message.author.mention}, ({best_role}) you're ready to use a GIF."
+                f"{message.author.mention}, ({best_role}) your kill/save is ready."
             )
         else:
             remaining = timedelta(hours=cooldown_hours) - (now - last)
@@ -111,7 +111,7 @@ async def on_message(message):
 
     if not valid_roles:
         await message.channel.send(
-            f"{message.author.mention}, you don't have permission to use this GIF!"
+            f"{message.author.mention}, you have to get to level 25 to use this!"
         )
         return
 
@@ -174,7 +174,7 @@ async def on_message(message):
 
         except Exception as e:
             await message.channel.send(
-                f"Failed to timeout {member_to_timeout.mention}: {e}"
+                f"Can't time out mods and bots lil bro"
             )
 
     await bot.process_commands(message)

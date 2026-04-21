@@ -50,10 +50,45 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # Must be a reply
-    if not message.reference:
-        await bot.process_commands(message)
+    # BOT MENTION → SHOW COOLDOWN
+    if bot.user in message.mentions:
+        author_roles = [role.name for role in message.author.roles]
+        valid_roles = [r for r in author_roles if r in ROLE_COOLDOWNS]
+    
+        if not valid_roles:
+            await message.channel.send(
+                f"{message.author.mention}, you don't have any cooldown role."
+            )
+            return
+    
+        # Best role (lowest cooldown)
+        best_role = min(valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
+        cooldown_hours = ROLE_COOLDOWNS[best_role]
+    
+        now = datetime.utcnow()
+        last = last_used.get(message.author.id)
+    
+        if cooldown_hours == 0:
+            await message.channel.send(
+                f"{message.author.mention}, ({best_role}) you have no cooldown 😈"
+            )
+            return
+    
+        if not last or now - last >= timedelta(hours=cooldown_hours):
+            await message.channel.send(
+                f"{message.author.mention}, ({best_role}) you're ready to use a GIF."
+            )
+        else:
+            remaining = timedelta(hours=cooldown_hours) - (now - last)
+            await message.channel.send(
+                f"{message.author.mention}, ({best_role}) cooldown remaining: {str(remaining).split('.')[0]}"
+            )
+    
         return
+        # Must be a reply
+        if not message.reference:
+            await bot.process_commands(message)
+            return
 
     content = message.content
 

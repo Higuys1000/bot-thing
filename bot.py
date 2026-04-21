@@ -17,10 +17,10 @@ TARGET_GIFS = [
     "https://klipy.com/gifs/blue-lock-gagamaru",
     "https://tenor.com/view/jjk-jujutsu-kaisen-jjk-fight-jujutsu-kaisen-fight-yuji-itadori-gif-13410355612590763521",
     "https://tenor.com/view/toji-kick-gif-12937973716924321908",
-    "https://tenor.com/view/toji-kick-gif-12937973716924321908",
     "https://tenor.com/view/nanami-shigemo-jjk-jujutsu-kaisen-jjk-season-2-gif-9821210930918976877"
 ]
 
+# UNTIMEOUT GIFS
 UNTIMEOUT_GIFS = [
     "https://tenor.com/view/doctor-manhattan-watchmen-marvel-gif-21030500",
     "https://klipy.com/gifs/doctor-manhattan-watchmen",
@@ -50,30 +50,31 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    # =========================
     # BOT MENTION → SHOW COOLDOWN
+    # =========================
     if bot.user in message.mentions:
         author_roles = [role.name for role in message.author.roles]
         valid_roles = [r for r in author_roles if r in ROLE_COOLDOWNS]
-    
+
         if not valid_roles:
             await message.channel.send(
                 f"{message.author.mention}, you don't have any cooldown role."
             )
             return
-    
-        # Best role (lowest cooldown)
+
         best_role = min(valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
         cooldown_hours = ROLE_COOLDOWNS[best_role]
-    
+
         now = datetime.utcnow()
         last = last_used.get(message.author.id)
-    
+
         if cooldown_hours == 0:
             await message.channel.send(
                 f"{message.author.mention}, ({best_role}) you have no cooldown 😈"
             )
             return
-    
+
         if not last or now - last >= timedelta(hours=cooldown_hours):
             await message.channel.send(
                 f"{message.author.mention}, ({best_role}) you're ready to use a GIF."
@@ -83,16 +84,17 @@ async def on_message(message):
             await message.channel.send(
                 f"{message.author.mention}, ({best_role}) cooldown remaining: {str(remaining).split('.')[0]}"
             )
-    
+
         return
-        # Must be a reply
-        if not message.reference:
-            await bot.process_commands(message)
-            return
+
+    # MUST BE A REPLY FOR GIF SYSTEM
+    if not message.reference:
+        await bot.process_commands(message)
+        return
 
     content = message.content
 
-    # Check if it's any relevant GIF
+    # Only proceed if GIF matches
     if not (any(gif in content for gif in TARGET_GIFS) or any(gif in content for gif in UNTIMEOUT_GIFS)):
         await bot.process_commands(message)
         return
@@ -113,7 +115,6 @@ async def on_message(message):
         )
         return
 
-    # BEST ROLE (lowest cooldown)
     best_role = min(valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
     cooldown_hours = ROLE_COOLDOWNS[best_role]
 
@@ -125,7 +126,7 @@ async def on_message(message):
         if now - last < timedelta(hours=cooldown_hours):
             remaining = timedelta(hours=cooldown_hours) - (now - last)
             await message.channel.send(
-                f"{message.author.mention}, ({best_role}) you can use a GIF again in {str(remaining).split('.')[0]}"
+                f"{message.author.mention}, ({best_role}) cooldown remaining: {str(remaining).split('.')[0]}"
             )
             return
 
@@ -137,14 +138,12 @@ async def on_message(message):
             await message.channel.send("They're not even timed out bro 💀")
             return
 
-        now_discord = discord.utils.utcnow()
-        remaining = member_to_timeout.timed_out_until - now_discord
+        remaining = member_to_timeout.timed_out_until - discord.utils.utcnow()
 
         if remaining.total_seconds() <= 90:
             try:
                 await member_to_timeout.timeout(None)
-
-                last_used[message.author.id] = now  # shared cooldown trigger
+                last_used[message.author.id] = now
 
                 await message.channel.send(
                     f"{member_to_timeout.mention} has been freed early by {message.author.mention}"
@@ -167,7 +166,7 @@ async def on_message(message):
                 discord.utils.utcnow() + timedelta(seconds=TIMEOUT_SECONDS)
             )
 
-            last_used[message.author.id] = now  # shared cooldown trigger
+            last_used[message.author.id] = now
 
             await message.channel.send(
                 f"{member_to_timeout.mention} has been timed out for {TIMEOUT_SECONDS}s by {message.author.mention} lmao"
@@ -192,12 +191,9 @@ async def on_reaction_add(reaction, user):
         "🧑‍🍼": "PREG"
     }
 
-    emoji_str = str(reaction.emoji)
-
-    if emoji_str in emoji_map:
-        label = emoji_map[emoji_str]
+    if str(reaction.emoji) in emoji_map:
         await reaction.message.channel.send(
-            f"{user.mention} JUST USED {label} EMOJI GO KILL THEM"
+            f"{user.mention} JUST USED {emoji_map[str(reaction.emoji)]} EMOJI GO KILL THEM"
         )
 
 

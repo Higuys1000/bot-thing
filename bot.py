@@ -10,7 +10,7 @@ intents.reactions = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# MULTIPLE GIFS
+# TIMEOUT GIFS
 TARGET_GIFS = [
     "https://tenor.com/view/jujutsu-kaisen-inumaki-toge-toge-inumaki-inumaki-toge-gif-2839387565091272519",
     "https://klipy.com/gifs/drmanhattan-watchman",
@@ -18,7 +18,10 @@ TARGET_GIFS = [
     "https://tenor.com/view/jjk-jujutsu-kaisen-jjk-fight-jujutsu-kaisen-fight-yuji-itadori-gif-13410355612590763521"
 ]
 
-TIMEOUT_SECONDS = 60
+# UNTIMEOUT GIF
+UNTIMEOUT_GIF = "https://tenor.com/view/doctor-manhattan-watchmen-marvel-gif-21030500"
+
+TIMEOUT_SECONDS = 90
 
 ROLE_COOLDOWNS = {
     "Bum": 18,
@@ -40,14 +43,25 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # Check if message is a reply AND contains ANY target GIF
-    if not message.reference or not any(gif in message.content for gif in TARGET_GIFS):
+    # Must be a reply
+    if not message.reference:
+        await bot.process_commands(message)
+        return
+
+    content = message.content
+
+    # Check if it's any relevant GIF
+    if not (any(gif in content for gif in TARGET_GIFS) or UNTIMEOUT_GIF in content):
         await bot.process_commands(message)
         return
 
     replied_message = await message.channel.fetch_message(message.reference.message_id)
     member_to_timeout = message.guild.get_member(replied_message.author.id)
 
+    if not member_to_timeout:
+        return
+
+    # ROLE CHECK
     author_roles = [role.name for role in message.author.roles]
     valid_roles = [r for r in author_roles if r in ROLE_COOLDOWNS]
 
@@ -57,36 +71,70 @@ async def on_message(message):
         )
         return
 
-    # Pick BEST role (lowest cooldown)
+    # BEST ROLE (lowest cooldown)
     best_role = min(valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
     cooldown_hours = ROLE_COOLDOWNS[best_role]
 
     now = datetime.utcnow()
     last = last_used.get(message.author.id)
 
+    # SHARED COOLDOWN CHECK
     if cooldown_hours > 0 and last:
         if now - last < timedelta(hours=cooldown_hours):
             remaining = timedelta(hours=cooldown_hours) - (now - last)
             await message.channel.send(
-                f"{message.author.mention}, ({best_role}) you can use the GIF again in {str(remaining).split('.')[0]}"
+                f"{message.author.mention}, ({best_role}) you can use a GIF again in {str(remaining).split('.')[0]}"
             )
             return
 
-    try:
-        await member_to_timeout.timeout(
-            discord.utils.utcnow() + timedelta(seconds=TIMEOUT_SECONDS)
-        )
+    # =========================
+    # UNTIMEOUT LOGIC
+    # =========================
+    if UNTIMEOUT_GIF in content:
+        if not member_to_timeout.timed_out_until:
+            await message.channel.send("They're not even timed out bro 💀")
+            return
 
-        last_used[message.author.id] = now
+        now_discord = discord.utils.utcnow()
+        remaining = member_to_timeout.timed_out_until - now_discord
 
-        await message.channel.send(
-            f"{member_to_timeout.mention} has been timed out for {TIMEOUT_SECONDS}s by {message.author.mention} lmao"
-        )
+        if remaining.total_seconds() <= 90:
+            try:
+                await member_to_timeout.timeout(None)
 
-    except Exception as e:
-        await message.channel.send(
-            f"Failed to timeout {member_to_timeout.mention}: {e}"
-        )
+                last_used[message.author.id] = now  # shared cooldown trigger
+
+                await message.channel.send(
+                    f"{member_to_timeout.mention} has been freed early by {message.author.mention}"
+                )
+            except Exception as e:
+                await message.channel.send(f"Failed to remove timeout: {e}")
+        else:
+            await message.channel.send(
+                f"Too long left on timeout ({int(remaining.total_seconds())}s). Can't save them."
+            )
+
+        return
+
+    # =========================
+    # TIMEOUT LOGIC
+    # =========================
+    if any(gif in content for gif in TARGET_GIFS):
+        try:
+            await member_to_timeout.timeout(
+                discord.utils.utcnow() + timedelta(seconds=TIMEOUT_SECONDS)
+            )
+
+            last_used[message.author.id] = now  # shared cooldown trigger
+
+            await message.channel.send(
+                f"{member_to_timeout.mention} has been timed out for {TIMEOUT_SECONDS}s by {message.author.mention} lmao"
+            )
+
+        except Exception as e:
+            await message.channel.send(
+                f"Failed to timeout {member_to_timeout.mention}: {e}"
+            )
 
     await bot.process_commands(message)
 

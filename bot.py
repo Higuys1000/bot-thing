@@ -38,7 +38,7 @@ ROLE_COOLDOWNS = {
     "Rat": 9,
     "Chud": 4,
     "Otis BFF ❤️": 4,
-    "Shit ass mod": 0,
+    "Shit ass mod": 0.5,
     "Good Moderator Morning!": 0,
     "Binding Vow": 0  # handled separately
 }

@@ -12,22 +12,37 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # TIMEOUT GIFS
 TARGET_GIFS = [
+
     "https://tenor.com/view/jujutsu-kaisen-inumaki-toge-toge-inumaki-inumaki-toge-gif-2839387565091272519",
+
     "https://klipy.com/gifs/drmanhattan-watchman",
+
     "https://klipy.com/gifs/blue-lock-gagamaru",
+
     "https://tenor.com/view/jjk-jujutsu-kaisen-jjk-fight-jujutsu-kaisen-fight-yuji-itadori-gif-13410355612590763521",
+
     "https://tenor.com/view/toji-kick-gif-12937973716924321908",
+
     "https://tenor.com/view/nanami-shigemo-jjk-jujutsu-kaisen-jjk-season-2-gif-9821210930918976877",
+
     "https://tenor.com/view/thragg-invincible-thragg-grabbing-mark-thragg-chasing-mark-blaziful-gif-9903393455394604140",
+
     "https://tenor.com/view/joe-swanson-gets-sent-to-the-shadow-realm-gif-12569580727382074039"
+
 ]
 
 # UNTIMEOUT GIFS
+
 UNTIMEOUT_GIFS = [
+
     "https://tenor.com/view/doctor-manhattan-watchmen-marvel-gif-21030500",
+
     "https://klipy.com/gifs/doctor-manhattan-watchmen",
+
     "https://tenor.com/view/revive-gif-23866294",
+
     "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664"
+
 ]
 
 TIMEOUT_SECONDS = 90
@@ -37,171 +52,161 @@ ROLE_COOLDOWNS = {
     "Rat": 9,
     "Chud": 4,
     "Otis BFF ❤️": 4,
-    "Shit ass mod": 0.5,
-    "Good Moderator Morning!": 0,
-    "Binding Vow": -1  # special handling
+    "Shit ass mod": 0,
+    "Good Moderator Morning!": 0
 }
 
-last_kill_used = {}
-last_save_used = {}
+SPECIAL_ROLE = "GregVow"
 
-# -------------------------
-# ROLE HELPER
-# -------------------------
-def get_best_role(member):
-    roles = [r.name for r in member.roles if r.name in ROLE_COOLDOWNS]
+last_used = {}
 
-    if "Binding Vow" in roles:
-        return "Binding Vow"
-
-    if not roles:
-        return None
-
-    return min(roles, key=lambda r: ROLE_COOLDOWNS[r])
-
-# -------------------------
-# READY
-# -------------------------
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
 
-# -------------------------
-# MESSAGE HANDLER
-# -------------------------
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    role = get_best_role(message.author)
-    now = datetime.utcnow()
+    author_roles = [role.name for role in message.author.roles]
 
     # =========================
-    # BOT MENTION → COOLDOWNS
+    # BOT MENTION → SHOW COOLDOWN
     # =========================
     if bot.user in message.mentions:
+        valid_roles = [r for r in author_roles if r in ROLE_COOLDOWNS]
 
-        if not role:
+        if not valid_roles:
             await message.channel.send(
-                f"{message.author.mention}, you need a role to use this."
+                f"{message.author.mention}, you don't have any cooldown role."
             )
             return
 
-        # BINDING VOW STATUS
-        if role == "Binding Vow":
-            kill_cd = timedelta(hours=30)
-            save_cd = timedelta(minutes=10)
+        best_role = min(valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
+        cooldown_hours = ROLE_COOLDOWNS[best_role]
 
-            kill_last = last_kill_used.get(message.author.id)
-            save_last = last_save_used.get(message.author.id)
+        # Apply GregVow modifier
+        if SPECIAL_ROLE in author_roles:
+            cooldown_hours *= 3
 
-            kill_ready = not kill_last or now - kill_last >= kill_cd
-            save_ready = not save_last or now - save_last >= save_cd
+        now = datetime.utcnow()
+        last = last_used.get(message.author.id)
 
+        if cooldown_hours == 0:
             await message.channel.send(
-                f"{message.author.mention} (Binding Vow)\n"
-                f"Kill: {'READY' if kill_ready else str(kill_cd - (now - kill_last)).split('.')[0]}\n"
-                f"Save: {'READY' if save_ready else str(save_cd - (now - save_last)).split('.')[0]}"
+                f"{message.author.mention}, ({best_role}) you have no cooldown 😈"
             )
             return
 
-        cd = ROLE_COOLDOWNS[role]
-        last = last_kill_used.get(message.author.id)
-
-        if cd == 0:
-            await message.channel.send(f"{message.author.mention}, no cooldown.")
-            return
-
-        if not last or now - last >= timedelta(hours=cd):
-            await message.channel.send(f"{message.author.mention}, ready.")
+        if not last or now - last >= timedelta(hours=cooldown_hours):
+            await message.channel.send(
+                f"{message.author.mention}, ({best_role}) you're ready to use a GIF."
+            )
         else:
-            remaining = timedelta(hours=cd) - (now - last)
+            remaining = timedelta(hours=cooldown_hours) - (now - last)
             await message.channel.send(
-                f"{message.author.mention}, cooldown: {str(remaining).split('.')[0]}"
+                f"{message.author.mention}, ({best_role}) cooldown remaining: {str(remaining).split('.')[0]}"
             )
+
         return
 
-    # MUST BE REPLY
+    # MUST BE A REPLY
     if not message.reference:
         await bot.process_commands(message)
         return
 
     content = message.content
 
-    if not (any(g in content for g in TARGET_GIFS) or any(g in content for g in UNTIMEOUT_GIFS)):
+    if not (any(gif in content for gif in TARGET_GIFS) or any(gif in content for gif in UNTIMEOUT_GIFS)):
         await bot.process_commands(message)
         return
 
-    replied = await message.channel.fetch_message(message.reference.message_id)
-    target = message.guild.get_member(replied.author.id)
+    replied_message = await message.channel.fetch_message(message.reference.message_id)
+    member_to_timeout = message.guild.get_member(replied_message.author.id)
 
-    if not target:
+    if not member_to_timeout:
         return
 
-    if not role:
-        await message.channel.send(f"{message.author.mention}, no permission.")
+    valid_roles = [r for r in author_roles if r in ROLE_COOLDOWNS]
+
+    if not valid_roles:
+        await message.channel.send(
+            f"{message.author.mention}, you don't have permission to use this GIF!"
+        )
         return
+
+    best_role = min(valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
+    cooldown_hours = ROLE_COOLDOWNS[best_role]
+
+    # Apply GregVow modifier
+    is_special = SPECIAL_ROLE in author_roles
+    if is_special:
+        cooldown_hours *= 3
+
+    now = datetime.utcnow()
+    last = last_used.get(message.author.id)
+
+    if cooldown_hours > 0 and last:
+        if now - last < timedelta(hours=cooldown_hours):
+            remaining = timedelta(hours=cooldown_hours) - (now - last)
+            await message.channel.send(
+                f"{message.author.mention}, ({best_role}) cooldown remaining: {str(remaining).split('.')[0]}"
+            )
+            return
 
     # =========================
     # UNTIMEOUT
     # =========================
-    if any(g in content for g in UNTIMEOUT_GIFS):
-
-        save_cd = timedelta(minutes=10) if role == "Binding Vow" else timedelta(hours=ROLE_COOLDOWNS[role])
-        last = last_save_used.get(message.author.id)
-
-        if ROLE_COOLDOWNS[role] > 0 and last and now - last < save_cd:
-            remaining = save_cd - (now - last)
-            await message.channel.send(
-                f"{message.author.mention} save cooldown: {str(remaining).split('.')[0]}"
-            )
+    if any(gif in content for gif in UNTIMEOUT_GIFS):
+        if not member_to_timeout.timed_out_until:
+            await message.channel.send("They're not even timed out bro 💀")
             return
 
-        if not target.timed_out_until:
-            await message.channel.send("They're not timed out 💀")
-            return
-
-        remaining = target.timed_out_until - discord.utils.utcnow()
+        remaining = member_to_timeout.timed_out_until - discord.utils.utcnow()
 
         if remaining.total_seconds() <= 90:
-            await target.timeout(None)
-            last_save_used[message.author.id] = now
-            await message.channel.send(f"{target.mention} saved by {message.author.mention}")
+            try:
+                await member_to_timeout.timeout(None)
+                last_used[message.author.id] = now
+
+                await message.channel.send(
+                    f"{member_to_timeout.mention} has been freed early by {message.author.mention}"
+                )
+            except Exception as e:
+                await message.channel.send(f"Failed to remove timeout: {e}")
         else:
-            await message.channel.send("Too long left.")
+            await message.channel.send(
+                f"Too long left on timeout ({int(remaining.total_seconds())}s). Can't save them."
+            )
 
         return
 
     # =========================
     # TIMEOUT
     # =========================
-    if any(g in content for g in TARGET_GIFS):
+    if any(gif in content for gif in TARGET_GIFS):
+        try:
+            duration = 180 if is_special else TIMEOUT_SECONDS
 
-        kill_cd = timedelta(hours=30) if role == "Binding Vow" else timedelta(hours=ROLE_COOLDOWNS[role])
-        last = last_kill_used.get(message.author.id)
-
-        if ROLE_COOLDOWNS[role] > 0 and last and now - last < kill_cd:
-            remaining = kill_cd - (now - last)
-            await message.channel.send(
-                f"{message.author.mention} kill cooldown: {str(remaining).split('.')[0]}"
+            await member_to_timeout.timeout(
+                discord.utils.utcnow() + timedelta(seconds=duration)
             )
-            return
 
-        duration = 180 if role == "Binding Vow" else TIMEOUT_SECONDS
+            last_used[message.author.id] = now
 
-        await target.timeout(discord.utils.utcnow() + timedelta(seconds=duration))
-        last_kill_used[message.author.id] = now
+            await message.channel.send(
+                f"{member_to_timeout.mention} has been timed out for {duration}s by {message.author.mention} lmao"
+            )
 
-        await message.channel.send(
-            f"{target.mention} timed out by {message.author.mention} for {duration}s"
-        )
+        except Exception as e:
+            await message.channel.send(
+                f"Failed to timeout {member_to_timeout.mention}: {e}"
+            )
 
     await bot.process_commands(message)
 
-# -------------------------
-# REACTIONS
-# -------------------------
+
 @bot.event
 async def on_reaction_add(reaction, user):
     if user.bot:
@@ -215,10 +220,8 @@ async def on_reaction_add(reaction, user):
 
     if str(reaction.emoji) in emoji_map:
         await reaction.message.channel.send(
-            f"{user.mention} USED {emoji_map[str(reaction.emoji)]} GO KILL THEM"
+            f"{user.mention} JUST USED {emoji_map[str(reaction.emoji)]} EMOJI GO KILL THEM"
         )
 
-# -------------------------
-# RUN
-# -------------------------
+
 bot.run(os.getenv("TOKEN"))

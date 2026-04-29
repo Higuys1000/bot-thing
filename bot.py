@@ -140,7 +140,7 @@ async def on_message(message):
 
         # Apply GregVow modifier
         if SPECIAL_ROLE in author_roles:
-            cooldown_hours *= 3
+            cooldown_hours *= 2
 
         now = datetime.utcnow()
         last = last_used.get(message.author.id)

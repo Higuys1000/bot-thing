@@ -10,7 +10,6 @@ intents.reactions = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# TIMEOUT GIFS
 TARGET_GIFS = [
 
     "https://tenor.com/view/jujutsu-kaisen-inumaki-toge-toge-inumaki-inumaki-toge-gif-2839387565091272519",
@@ -27,7 +26,37 @@ TARGET_GIFS = [
 
     "https://tenor.com/view/thragg-invincible-thragg-grabbing-mark-thragg-chasing-mark-blaziful-gif-9903393455394604140",
 
-    "https://tenor.com/view/joe-swanson-gets-sent-to-the-shadow-realm-gif-12569580727382074039"
+    "https://tenor.com/view/joe-swanson-gets-sent-to-the-shadow-realm-gif-12569580727382074039",
+
+   "https://tenor.com/view/avatar-eyes-mark-philips-rdcworld1-i-have-awoken-rdc-gif-11037312579902835094",
+
+    "https://tenor.com/view/xenoverse-goku-super-saiyan-angry-dbz-gif-1416275111944307575",
+
+    "https://tenor.com/v3Hf08v2vRk.gif",
+
+    "https://tenor.com/pZ9FvlIB584.gif",
+
+    "https://tenor.com/view/naoya-jujutsu-kaisen-jujutsu-kaisen-season-3-maki-maki-zenin-gif-13642749527516671169",
+
+    "https://tenor.com/bO4gv.gif",
+
+    "https://tenor.com/view/gojo-gojo-satoru-gojo-season-2-hip-thrust-reaction-gif-10399129046512126318",
+
+    "https://tenor.com/g1PMKnVanu.gif",
+
+    "https://tenor.com/gCWUsSmNiKZ.gif",
+
+    "https://tenor.com/bG6Lk.gif",
+
+    "https://tenor.com/1nKPZe19HC.gif",
+
+    "https://tenor.com/hePTjbsH6wO.gif",
+
+    "https://tenor.com/s5LleKfiFIt.gif",
+
+    "https://tenor.com/qiJpIenIjHB.gif",
+
+    "https://tenor.com/fNMtMSKEIch.gif"
 
 ]
 
@@ -43,8 +72,29 @@ UNTIMEOUT_GIFS = [
 
     "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664"
 
-]
+    "https://tenor.com/onF9Vf3cHMO.gif",
 
+    "https://tenor.com/ivDIWgkDkDv.gif",
+
+    "https://tenor.com/qqPLKMoUvl1.gif",
+
+    "https://tenor.com/hpUwFpPR9uO.gif",
+
+    "https://tenor.com/gxFat3FEapG.gif",
+
+    "https://tenor.com/gFHyueznjs6.gif",
+
+    "https://tenor.com/MYbN.gif",
+
+    "https://tenor.com/cNyjFADRNTl.gif",
+
+    "https://tenor.com/bJKg7.gif",
+
+    "https://tenor.com/maZbVIbE3Pr.gif",
+
+    "https://tenor.com/pyF0khnkBOB.gif"
+
+]
 TIMEOUT_SECONDS = 90
 
 ROLE_COOLDOWNS = {

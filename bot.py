@@ -92,7 +92,9 @@ UNTIMEOUT_GIFS = [
 
     "https://tenor.com/maZbVIbE3Pr.gif",
 
-    "https://tenor.com/pyF0khnkBOB.gif"
+    "https://tenor.com/pyF0khnkBOB.gif",
+
+    "https://tenor.com/view/ryu-ryu-ishigori-yuta-yuta-okkotsu-jujutsu-kaisen-gif-8459438190665096786"
 
 ]
 TIMEOUT_SECONDS = 90

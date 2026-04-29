@@ -56,8 +56,9 @@ TARGET_GIFS = [
 
     "https://tenor.com/qiJpIenIjHB.gif",
 
-    "https://tenor.com/fNMtMSKEIch.gif"
+    "https://tenor.com/fNMtMSKEIch.gif",
 
+    "https://tenor.com/view/goku-black-goku-black-shush-zamasu-gif-5057528923283903671"
 ]
 
 # UNTIMEOUT GIFS

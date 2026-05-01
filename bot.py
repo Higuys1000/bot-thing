@@ -2,6 +2,8 @@ import discord
 from discord.ext import commands
 from datetime import datetime, timedelta
 import os
+import asyncio
+import re
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -111,11 +113,229 @@ ROLE_COOLDOWNS = {
 
 SPECIAL_ROLE = "GregVow"
 
+# Roles allowed to use !deglove and !reglove
+DEGLOVE_ROLES = {"Shit ass mod", "Good Moderator Morning!"}
+
+# Channel name where deglove sentences are announced
+DEADLY_SENTENCES_CHANNEL = "deadly-sentences"
+
+# Banned role name to assign during deglove
+BANNED_ROLE_NAME = "Banned"
+
+# Stores active deglovings: { member_id: { "roles": [...], "message": Message, "task": Task } }
+active_deglovings = {}
+
 last_used = {}
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
+
+
+def parse_duration(duration_str):
+    """
+    Parses a duration string like '10m', '2h', '1d', '30s' into total seconds.
+    Returns None if the format is invalid.
+    """
+    match = re.fullmatch(r"(\d+)(s|m|h|d)", duration_str.strip().lower())
+    if not match:
+        return None
+    value, unit = int(match.group(1)), match.group(2)
+    multipliers = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    return value * multipliers[unit]
+
+
+async def reglove_member(guild, member, announce_channel):
+    """Restores a member's roles after deglove ends (or is cut short by !reglove)."""
+    entry = active_deglovings.pop(member.id, None)
+    if not entry:
+        return
+
+    # Cancel the scheduled task if it's still running
+    task = entry.get("task")
+    if task and not task.done():
+        task.cancel()
+
+    saved_roles = entry.get("roles", [])
+    sentence_message = entry.get("message")
+
+    # Remove Banned role
+    banned_role = discord.utils.get(guild.roles, name=BANNED_ROLE_NAME)
+    if banned_role and banned_role in member.roles:
+        try:
+            await member.remove_roles(banned_role, reason="Deglove period ended")
+        except Exception:
+            pass
+
+    # Restore original roles (skip managed/bot roles and roles higher than bot's top role)
+    bot_top_role = guild.me.top_role
+    roles_to_restore = [
+        r for r in saved_roles
+        if not r.managed and r != guild.default_role and r < bot_top_role
+    ]
+    if roles_to_restore:
+        try:
+            await member.add_roles(*roles_to_restore, reason="Deglove period ended")
+        except Exception:
+            pass
+
+    # Delete the sentence message
+    if sentence_message:
+        try:
+            await sentence_message.delete()
+        except Exception:
+            pass
+
+    if announce_channel:
+        await announce_channel.send(
+            f"{member.mention} has been regloved. Roles restored."
+        )
+
+
+@bot.command(name="deglove")
+async def deglove(ctx, duration: str = None, *, reason: str = None):
+    """
+    Usage (as a reply): !deglove <duration> <reason>
+    Duration format: 30s, 10m, 2h, 1d
+    Requires "Shit ass mod" or "Good Moderator Morning!" role.
+    """
+    author_roles = {role.name for role in ctx.author.roles}
+
+    # Permission check
+    if not (author_roles & DEGLOVE_ROLES):
+        await ctx.send(f"{ctx.author.mention}, you're not a mod lil bro")
+        return
+
+    # Must be a reply
+    if not ctx.message.reference:
+        await ctx.send("You need to reply to someone's message to deglove them.")
+        return
+
+    # Duration required
+    if not duration:
+        await ctx.send("Usage: `!deglove <duration> <reason>` (e.g. `!deglove 10m being annoying`)")
+        return
+
+    seconds = parse_duration(duration)
+    if seconds is None:
+        await ctx.send("Invalid duration format. Use `30s`, `10m`, `2h`, or `1d`.")
+        return
+
+    if not reason:
+        await ctx.send("Please provide a reason. Usage: `!deglove <duration> <reason>`")
+        return
+
+    # Get the target member
+    replied_message = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+    member = ctx.guild.get_member(replied_message.author.id)
+
+    if not member:
+        await ctx.send("Couldn't find that member in the server.")
+        return
+
+    if member.bot:
+        await ctx.send("You can't deglove a bot.")
+        return
+
+    # Check if already degloved
+    if member.id in active_deglovings:
+        await ctx.send(f"{member.mention} is already degloved.")
+        return
+
+    # Get Banned role
+    banned_role = discord.utils.get(ctx.guild.roles, name=BANNED_ROLE_NAME)
+    if not banned_role:
+        await ctx.send(f'Could not find a role named "{BANNED_ROLE_NAME}". Make sure it exists.')
+        return
+
+    # Save their current roles (excluding @everyone and managed roles)
+    bot_top_role = ctx.guild.me.top_role
+    saved_roles = [
+        r for r in member.roles
+        if r != ctx.guild.default_role and not r.managed and r < bot_top_role
+    ]
+
+    # Remove all saveable roles
+    if saved_roles:
+        try:
+            await member.remove_roles(*saved_roles, reason=f"Degloved by {ctx.author}")
+        except discord.Forbidden:
+            await ctx.send("I don't have permission to remove that member's roles.")
+            return
+
+    # Add Banned role
+    try:
+        await member.add_roles(banned_role, reason=f"Degloved by {ctx.author}: {reason}")
+    except discord.Forbidden:
+        await ctx.send("I don't have permission to assign the Banned role.")
+        # Restore roles since we failed halfway
+        if saved_roles:
+            await member.add_roles(*saved_roles, reason="Deglove failed, restoring roles")
+        return
+
+    # Find #deadly-sentences channel
+    sentence_channel = discord.utils.get(ctx.guild.text_channels, name=DEADLY_SENTENCES_CHANNEL)
+    sentence_message = None
+    if sentence_channel:
+        sentence_message = await sentence_channel.send(
+            f"🩸 **DEGLOVED** 🩸\n"
+            f"**{member.display_name}** has been degloved by {ctx.author.mention}\n"
+            f"**Duration:** {duration}\n"
+            f"**Reason:** {reason}"
+        )
+    else:
+        await ctx.send(f'Warning: Could not find channel "{DEADLY_SENTENCES_CHANNEL}" to post the sentence.')
+
+    await ctx.send("https://klipy.com/gifs/gojo-geto-suguru-2--k01KQGSQKMYQQE758SGTJ41WF3X")
+    await ctx.send(f"{member.mention} has been sealed for {duration}")
+
+    # Schedule automatic reglove
+    async def scheduled_reglove():
+        await asyncio.sleep(seconds)
+        if member.id in active_deglovings:
+            await reglove_member(ctx.guild, member, ctx.channel)
+
+    task = asyncio.create_task(scheduled_reglove())
+
+    active_deglovings[member.id] = {
+        "roles": saved_roles,
+        "message": sentence_message,
+        "task": task,
+    }
+
+
+@bot.command(name="reglove")
+async def reglove(ctx):
+    """
+    Usage (as a reply): !reglove
+    Cuts a deglove short early and restores the member's roles.
+    Requires "Shit ass mod" or "Good Moderator Morning!" role.
+    """
+    author_roles = {role.name for role in ctx.author.roles}
+
+    # Permission check
+    if not (author_roles & DEGLOVE_ROLES):
+        await ctx.send(f"{ctx.author.mention}, you don't have permission to reglove.")
+        return
+
+    # Must be a reply
+    if not ctx.message.reference:
+        await ctx.send("You need to reply to the message of the person you want to reglove.")
+        return
+
+    replied_message = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+    member = ctx.guild.get_member(replied_message.author.id)
+
+    if not member:
+        await ctx.send("Couldn't find that member in the server.")
+        return
+
+    if member.id not in active_deglovings:
+        await ctx.send(f"{member.mention} isn't currently degloved.")
+        return
+
+    await reglove_member(ctx.guild, member, ctx.channel)
+
 
 @bot.event
 async def on_message(message):

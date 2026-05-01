@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import os
 import asyncio
 import re
+import traceback
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -100,6 +101,7 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/ryu-ryu-ishigori-yuta-yuta-okkotsu-jujutsu-kaisen-gif-8459438190665096786"
 
 ]
+
 TIMEOUT_SECONDS = 90
 
 ROLE_COOLDOWNS = {
@@ -116,16 +118,37 @@ SPECIAL_ROLE = "GregVow"
 # Roles allowed to use !deglove and !reglove
 DEGLOVE_ROLES = {"Shit ass mod", "Good Moderator Morning!"}
 
-# Channel name where deglove sentences are announced
+# Channel names
 DEADLY_SENTENCES_CHANNEL = "deadly-sentences"
+MODLOG_CHANNEL = "modlog"
 
 # Banned role name to assign during deglove
 BANNED_ROLE_NAME = "Banned"
 
-# Stores active deglovings: { member_id: { "roles": [...], "message": Message, "task": Task } }
+# Stores active deglovings:
+# { member_id: { "role_ids": [int], "message_id": int, "channel_id": int, "task": Task } }
 active_deglovings = {}
 
 last_used = {}
+
+
+# =========================
+# ERROR LOGGING HELPER
+# =========================
+
+async def log_error(guild, label: str, error: Exception):
+    """Sends an error message to #modlog and prints to console."""
+    tb = traceback.format_exc()
+    print(f"[ERROR] {label}: {error}\n{tb}")
+    modlog = discord.utils.get(guild.text_channels, name=MODLOG_CHANNEL)
+    if modlog:
+        # Truncate traceback if it's very long
+        tb_trimmed = tb[-1500:] if len(tb) > 1500 else tb
+        await modlog.send(
+            f"⚠️ **Bot Error — {label}**\n"
+            f"```{type(error).__name__}: {error}\n\n{tb_trimmed}```"
+        )
+
 
 @bot.event
 async def on_ready():
@@ -156,40 +179,60 @@ async def reglove_member(guild, member, announce_channel):
     if task and not task.done():
         task.cancel()
 
-    saved_roles = entry.get("roles", [])
-    sentence_message = entry.get("message")
+    saved_role_ids = entry.get("role_ids", [])
+    message_id = entry.get("message_id")
+    channel_id = entry.get("channel_id")
 
     # Remove Banned role
     banned_role = discord.utils.get(guild.roles, name=BANNED_ROLE_NAME)
     if banned_role and banned_role in member.roles:
         try:
             await member.remove_roles(banned_role, reason="Deglove period ended")
-        except Exception:
-            pass
+        except Exception as e:
+            await log_error(guild, f"reglove: remove Banned role from {member}", e)
 
-    # Restore original roles (skip managed/bot roles and roles higher than bot's top role)
+    # Re-fetch role objects fresh from the guild by ID to avoid stale references
     bot_top_role = guild.me.top_role
-    roles_to_restore = [
-        r for r in saved_roles
-        if not r.managed and r != guild.default_role and r < bot_top_role
-    ]
+    roles_to_restore = []
+    for role_id in saved_role_ids:
+        role = guild.get_role(role_id)
+        if role is None:
+            print(f"[reglove] Role ID {role_id} no longer exists in guild, skipping")
+            continue
+        if role.managed:
+            continue
+        if role >= bot_top_role:
+            print(f"[reglove] Skipping role above bot's top role: {role.name}")
+            continue
+        roles_to_restore.append(role)
+
     if roles_to_restore:
         try:
             await member.add_roles(*roles_to_restore, reason="Deglove period ended")
-        except Exception:
-            pass
+            print(f"[reglove] Restored {len(roles_to_restore)} roles to {member}")
+        except Exception as e:
+            await log_error(guild, f"reglove: restore roles for {member}", e)
+    else:
+        msg = f"[reglove] No restorable roles found for {member} (saved IDs: {saved_role_ids})"
+        print(msg)
+        modlog = discord.utils.get(guild.text_channels, name=MODLOG_CHANNEL)
+        if modlog:
+            await modlog.send(f"⚠️ **Reglove warning:** No roles could be restored for {member.mention}. Saved IDs: `{saved_role_ids}`")
 
-    # Delete the sentence message
-    if sentence_message:
+    # Delete the sentence message — fetch fresh by ID so the reference isn't stale
+    if channel_id and message_id:
         try:
-            await sentence_message.delete()
-        except Exception:
-            pass
+            sentence_channel = guild.get_channel(channel_id)
+            if sentence_channel:
+                sentence_message = await sentence_channel.fetch_message(message_id)
+                await sentence_message.delete()
+            else:
+                raise ValueError(f"Channel ID {channel_id} not found in guild")
+        except Exception as e:
+            await log_error(guild, f"reglove: delete sentence message {message_id}", e)
 
     if announce_channel:
-        await announce_channel.send(
-            f"{member.mention} has been regloved. Roles restored."
-        )
+        await announce_channel.send(f"{member.mention} has been regloved. Roles restored.")
 
 
 @bot.command(name="deglove")
@@ -226,7 +269,13 @@ async def deglove(ctx, duration: str = None, *, reason: str = None):
         return
 
     # Get the target member
-    replied_message = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+    try:
+        replied_message = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+    except Exception as e:
+        await ctx.send("Couldn't fetch the replied message.")
+        await log_error(ctx.guild, "deglove: fetch replied message", e)
+        return
+
     member = ctx.guild.get_member(replied_message.author.id)
 
     if not member:
@@ -248,58 +297,82 @@ async def deglove(ctx, duration: str = None, *, reason: str = None):
         await ctx.send(f'Could not find a role named "{BANNED_ROLE_NAME}". Make sure it exists.')
         return
 
-    # Save their current roles (excluding @everyone and managed roles)
+    # Save role IDs (not objects) — avoids stale references when the timer fires later
     bot_top_role = ctx.guild.me.top_role
-    saved_roles = [
-        r for r in member.roles
+    saved_role_ids = [
+        r.id for r in member.roles
         if r != ctx.guild.default_role and not r.managed and r < bot_top_role
     ]
+    print(f"[deglove] Saving role IDs for {member}: {saved_role_ids}")
 
     # Remove all saveable roles
-    if saved_roles:
+    roles_to_remove = [ctx.guild.get_role(rid) for rid in saved_role_ids]
+    roles_to_remove = [r for r in roles_to_remove if r]
+    if roles_to_remove:
         try:
-            await member.remove_roles(*saved_roles, reason=f"Degloved by {ctx.author}")
-        except discord.Forbidden:
+            await member.remove_roles(*roles_to_remove, reason=f"Degloved by {ctx.author}")
+        except discord.Forbidden as e:
             await ctx.send("I don't have permission to remove that member's roles.")
+            await log_error(ctx.guild, f"deglove: remove roles from {member}", e)
+            return
+        except Exception as e:
+            await ctx.send("Something went wrong removing roles.")
+            await log_error(ctx.guild, f"deglove: remove roles from {member}", e)
             return
 
     # Add Banned role
     try:
         await member.add_roles(banned_role, reason=f"Degloved by {ctx.author}: {reason}")
-    except discord.Forbidden:
+    except discord.Forbidden as e:
         await ctx.send("I don't have permission to assign the Banned role.")
-        # Restore roles since we failed halfway
-        if saved_roles:
-            await member.add_roles(*saved_roles, reason="Deglove failed, restoring roles")
+        await log_error(ctx.guild, f"deglove: add Banned role to {member}", e)
+        if roles_to_remove:
+            await member.add_roles(*roles_to_remove, reason="Deglove failed, restoring roles")
+        return
+    except Exception as e:
+        await ctx.send("Something went wrong assigning the Banned role.")
+        await log_error(ctx.guild, f"deglove: add Banned role to {member}", e)
         return
 
-    # Find #deadly-sentences channel
+    # Post in #deadly-sentences — store message ID and channel ID, not the object
     sentence_channel = discord.utils.get(ctx.guild.text_channels, name=DEADLY_SENTENCES_CHANNEL)
-    sentence_message = None
+    message_id = None
+    channel_id = None
     if sentence_channel:
-        sentence_message = await sentence_channel.send(
-            f"🩸 **DEGLOVED** 🩸\n"
-            f"**{member.display_name}** has been degloved by {ctx.author.mention}\n"
-            f"**Duration:** {duration}\n"
-            f"**Reason:** {reason}"
-        )
+        try:
+            sentence_message = await sentence_channel.send(
+                f"🩸 **DEGLOVED** 🩸\n"
+                f"**{member.display_name}** has been degloved by {ctx.author.mention}\n"
+                f"**Duration:** {duration}\n"
+                f"**Reason:** {reason}"
+            )
+            message_id = sentence_message.id
+            channel_id = sentence_channel.id
+        except Exception as e:
+            await log_error(ctx.guild, "deglove: send deadly-sentences message", e)
     else:
         await ctx.send(f'Warning: Could not find channel "{DEADLY_SENTENCES_CHANNEL}" to post the sentence.')
 
     await ctx.send("https://klipy.com/gifs/gojo-geto-suguru-2--k01KQGSQKMYQQE758SGTJ41WF3X")
     await ctx.send(f"{member.mention} has been sealed for {duration}")
 
-    # Store entry first, then schedule the task so reglove_member always finds it
+    # Store entry first, then create task
     active_deglovings[member.id] = {
-        "roles": saved_roles,
-        "message": sentence_message,
+        "role_ids": saved_role_ids,
+        "message_id": message_id,
+        "channel_id": channel_id,
         "task": None,
     }
 
     async def scheduled_reglove():
-        await asyncio.sleep(seconds)
-        if member.id in active_deglovings:
-            await reglove_member(ctx.guild, member, ctx.channel)
+        try:
+            await asyncio.sleep(seconds)
+            if member.id in active_deglovings:
+                await reglove_member(ctx.guild, member, ctx.channel)
+        except asyncio.CancelledError:
+            pass  # Task was cancelled by !reglove, that's fine
+        except Exception as e:
+            await log_error(ctx.guild, f"scheduled_reglove for {member}", e)
 
     task = asyncio.create_task(scheduled_reglove())
     active_deglovings[member.id]["task"] = task
@@ -324,7 +397,13 @@ async def reglove(ctx):
         await ctx.send("You need to reply to the message of the person you want to reglove.")
         return
 
-    replied_message = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+    try:
+        replied_message = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+    except Exception as e:
+        await ctx.send("Couldn't fetch the replied message.")
+        await log_error(ctx.guild, "reglove: fetch replied message", e)
+        return
+
     member = ctx.guild.get_member(replied_message.author.id)
 
     if not member:
@@ -335,7 +414,10 @@ async def reglove(ctx):
         await ctx.send(f"{member.mention} isn't currently degloved.")
         return
 
-    await reglove_member(ctx.guild, member, ctx.channel)
+    try:
+        await reglove_member(ctx.guild, member, ctx.channel)
+    except Exception as e:
+        await log_error(ctx.guild, f"reglove command for {member}", e)
 
 
 @bot.event
@@ -396,7 +478,13 @@ async def on_message(message):
         await bot.process_commands(message)
         return
 
-    replied_message = await message.channel.fetch_message(message.reference.message_id)
+    try:
+        replied_message = await message.channel.fetch_message(message.reference.message_id)
+    except Exception as e:
+        await log_error(message.guild, "on_message: fetch replied message", e)
+        await bot.process_commands(message)
+        return
+
     member_to_timeout = message.guild.get_member(replied_message.author.id)
 
     if not member_to_timeout:
@@ -443,12 +531,12 @@ async def on_message(message):
             try:
                 await member_to_timeout.timeout(None)
                 last_used[message.author.id] = now
-
                 await message.channel.send(
                     f"{member_to_timeout.mention} has been freed early by {message.author.mention}"
                 )
             except Exception as e:
-                await message.channel.send(f"Failed to remove timeout: {e}")
+                await message.channel.send(f"Failed to remove timeout.")
+                await log_error(message.guild, f"untimeout: remove timeout from {member_to_timeout}", e)
         else:
             await message.channel.send(
                 f"Too long left on timeout ({int(remaining.total_seconds())}s). Can't save them."
@@ -474,9 +562,8 @@ async def on_message(message):
             )
 
         except Exception as e:
-            await message.channel.send(
-                f"Failed to timeout {member_to_timeout.mention}: {e}"
-            )
+            await message.channel.send(f"Failed to timeout {member_to_timeout.mention}.")
+            await log_error(message.guild, f"timeout: apply timeout to {member_to_timeout}", e)
 
     await bot.process_commands(message)
 
@@ -496,6 +583,15 @@ async def on_reaction_add(reaction, user):
         await reaction.message.channel.send(
             f"{user.mention} JUST USED {emoji_map[str(reaction.emoji)]} EMOJI GO KILL THEM"
         )
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    """Catches any unhandled command errors and logs them to #modlog."""
+    # Ignore expected non-errors
+    if isinstance(error, commands.CommandNotFound):
+        return
+    await log_error(ctx.guild, f"command error in #{ctx.channel.name} by {ctx.author}", error)
 
 
 bot.run(os.getenv("TOKEN"))

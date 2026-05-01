@@ -203,7 +203,7 @@ async def deglove(ctx, duration: str = None, *, reason: str = None):
 
     # Permission check
     if not (author_roles & DEGLOVE_ROLES):
-        await ctx.send(f"{ctx.author.mention}, you're not a mod lil bro")
+        await ctx.send(f"{ctx.author.mention}, you don't have permission to deglove.")
         return
 
     # Must be a reply
@@ -289,19 +289,20 @@ async def deglove(ctx, duration: str = None, *, reason: str = None):
     await ctx.send("https://klipy.com/gifs/gojo-geto-suguru-2--k01KQGSQKMYQQE758SGTJ41WF3X")
     await ctx.send(f"{member.mention} has been sealed for {duration}")
 
-    # Schedule automatic reglove
+    # Store entry first, then schedule the task so reglove_member always finds it
+    active_deglovings[member.id] = {
+        "roles": saved_roles,
+        "message": sentence_message,
+        "task": None,
+    }
+
     async def scheduled_reglove():
         await asyncio.sleep(seconds)
         if member.id in active_deglovings:
             await reglove_member(ctx.guild, member, ctx.channel)
 
     task = asyncio.create_task(scheduled_reglove())
-
-    active_deglovings[member.id] = {
-        "roles": saved_roles,
-        "message": sentence_message,
-        "task": task,
-    }
+    active_deglovings[member.id]["task"] = task
 
 
 @bot.command(name="reglove")

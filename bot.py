@@ -88,9 +88,9 @@ BINDING_VOWS = {
         "description": "Kill CDs ×3",
     },
     "Healing Vow": {
-        "kill_multiplier": 3.0,
-        "save_multiplier": 0.1,   # ÷10
-        "description": "Kill CDs ×3 / Save CDs ÷10",
+        "kill_multiplier": None,   # Cannot kill — blocked entirely
+        "save_multiplier": 0.02,   # ÷50
+        "description": "Cannot kill / Save CDs ÷50",
     },
 }
 
@@ -115,13 +115,18 @@ def apply_vow(base_cooldown_hours: float, action: str, vow_name: str | None) -> 
 
     action: "kill" or "save"
     vow_name: a key in BINDING_VOWS, or None (no vow), or "CONFLICT" (ignored).
-    Result is clamped to >= 0.
+    Returns -1.0 if the action is blocked by the vow (e.g. Healing Vow can't kill).
+    Result is otherwise clamped to >= 0.
     """
     if not vow_name or vow_name == "CONFLICT" or vow_name not in BINDING_VOWS:
         return max(0.0, base_cooldown_hours)
 
     vow = BINDING_VOWS[vow_name]
     multiplier = vow["kill_multiplier"] if action == "kill" else vow["save_multiplier"]
+
+    if multiplier is None:
+        return -1.0  # Action blocked
+
     return max(0.0, base_cooldown_hours * multiplier)
 
 
@@ -451,6 +456,8 @@ async def on_message(message):
         last = last_used.get(message.author.id)
 
         def format_cd(hours: float) -> str:
+            if hours == -1.0:
+                return "blocked 🚫"
             if hours <= 0:
                 return "ready instantly ✅"
             td = timedelta(hours=hours)
@@ -519,6 +526,13 @@ async def on_message(message):
     action = "kill" if is_kill_gif else "save"
     effective_cooldown_hours = apply_vow(base_cooldown_hours, action, vow)
     vow_str = format_vow_label(vow)
+
+    # Vow blocks this action entirely
+    if effective_cooldown_hours == -1.0:
+        await message.channel.send(
+            f"{message.author.mention}, your {vow} forbids you from killing. 🩹"
+        )
+        return
 
     now = datetime.utcnow()
     last = last_used.get(message.author.id)

@@ -14,92 +14,49 @@ intents.reactions = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 TARGET_GIFS = [
-
     "https://tenor.com/view/jujutsu-kaisen-inumaki-toge-toge-inumaki-inumaki-toge-gif-2839387565091272519",
-
     "https://klipy.com/gifs/drmanhattan-watchman",
-
     "https://klipy.com/gifs/blue-lock-gagamaru",
-
     "https://tenor.com/view/jjk-jujutsu-kaisen-jjk-fight-jujutsu-kaisen-fight-yuji-itadori-gif-13410355612590763521",
-
     "https://tenor.com/view/toji-kick-gif-12937973716924321908",
-
     "https://tenor.com/view/nanami-shigemo-jjk-jujutsu-kaisen-jjk-season-2-gif-9821210930918976877",
-
     "https://tenor.com/view/thragg-invincible-thragg-grabbing-mark-thragg-chasing-mark-blaziful-gif-9903393455394604140",
-
     "https://tenor.com/view/joe-swanson-gets-sent-to-the-shadow-realm-gif-12569580727382074039",
-
-   "https://tenor.com/view/avatar-eyes-mark-philips-rdcworld1-i-have-awoken-rdc-gif-11037312579902835094",
-
+    "https://tenor.com/view/avatar-eyes-mark-philips-rdcworld1-i-have-awoken-rdc-gif-11037312579902835094",
     "https://tenor.com/view/xenoverse-goku-super-saiyan-angry-dbz-gif-1416275111944307575",
-
     "https://tenor.com/v3Hf08v2vRk.gif",
-
     "https://tenor.com/pZ9FvlIB584.gif",
-
     "https://tenor.com/view/naoya-jujutsu-kaisen-jujutsu-kaisen-season-3-maki-maki-zenin-gif-13642749527516671169",
-
     "https://tenor.com/bO4gv.gif",
-
     "https://tenor.com/view/gojo-gojo-satoru-gojo-season-2-hip-thrust-reaction-gif-10399129046512126318",
-
     "https://tenor.com/g1PMKnVanu.gif",
-
     "https://tenor.com/gCWUsSmNiKZ.gif",
-
     "https://tenor.com/bG6Lk.gif",
-
     "https://tenor.com/1nKPZe19HC.gif",
-
     "https://tenor.com/hePTjbsH6wO.gif",
-
     "https://tenor.com/s5LleKfiFIt.gif",
-
     "https://tenor.com/qiJpIenIjHB.gif",
-
     "https://tenor.com/fNMtMSKEIch.gif",
-
     "https://tenor.com/view/goku-black-goku-black-shush-zamasu-gif-5057528923283903671"
 ]
 
-# UNTIMEOUT GIFS
-
 UNTIMEOUT_GIFS = [
-
     "https://tenor.com/view/doctor-manhattan-watchmen-marvel-gif-21030500",
-
     "https://klipy.com/gifs/doctor-manhattan-watchmen",
-
     "https://tenor.com/view/revive-gif-23866294",
-
     "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664"
-
     "https://tenor.com/onF9Vf3cHMO.gif",
-
     "https://tenor.com/ivDIWgkDkDv.gif",
-
     "https://tenor.com/qqPLKMoUvl1.gif",
-
     "https://tenor.com/hpUwFpPR9uO.gif",
-
     "https://tenor.com/gxFat3FEapG.gif",
-
     "https://tenor.com/gFHyueznjs6.gif",
-
     "https://tenor.com/MYbN.gif",
-
     "https://tenor.com/cNyjFADRNTl.gif",
-
     "https://tenor.com/bJKg7.gif",
-
     "https://tenor.com/maZbVIbE3Pr.gif",
-
     "https://tenor.com/pyF0khnkBOB.gif",
-
     "https://tenor.com/view/ryu-ryu-ishigori-yuta-yuta-okkotsu-jujutsu-kaisen-gif-8459438190665096786"
-
 ]
 
 TIMEOUT_SECONDS = 90
@@ -113,19 +70,78 @@ ROLE_COOLDOWNS = {
     "Good Moderator Morning!": 0
 }
 
-SPECIAL_ROLE = "GregVow"
+# =========================
+# BINDING VOW SYSTEM
+# A user may hold AT MOST ONE Binding Vow at a time.
+# Each vow defines separate multipliers for kill and save cooldowns.
+# If a user somehow has multiple vow roles, the bot will warn them and ignore all vows.
+#
+# kill_multiplier: applied to the base cooldown after using a kill GIF
+# save_multiplier: applied to the base cooldown after using a save GIF
+#   (result is clamped to >= 0, so a save CD can reach 0 = instant reuse)
+# =========================
 
-# Roles allowed to use !deglove and !reglove
+BINDING_VOWS = {
+    "Destruction Vow": {
+        "kill_multiplier": 3.0,
+        "save_multiplier": 1.0,
+        "description": "Kill CDs ×3",
+    },
+    "Healing Vow": {
+        "kill_multiplier": 3.0,
+        "save_multiplier": 0.1,   # ÷10
+        "description": "Kill CDs ×3 / Save CDs ÷10",
+    },
+}
+
+
+def get_active_vow(author_roles: list[str]) -> str | None:
+    """
+    Returns the single Binding Vow the user holds, or None if they have none.
+    If they somehow hold multiple vows, returns the sentinel string "CONFLICT"
+    so callers can warn them.
+    """
+    held = [vow for vow in BINDING_VOWS if vow in author_roles]
+    if len(held) == 0:
+        return None
+    if len(held) == 1:
+        return held[0]
+    return "CONFLICT"
+
+
+def apply_vow(base_cooldown_hours: float, action: str, vow_name: str | None) -> float:
+    """
+    Applies the user's single Binding Vow multiplier to a base cooldown.
+
+    action: "kill" or "save"
+    vow_name: a key in BINDING_VOWS, or None (no vow), or "CONFLICT" (ignored).
+    Result is clamped to >= 0.
+    """
+    if not vow_name or vow_name == "CONFLICT" or vow_name not in BINDING_VOWS:
+        return max(0.0, base_cooldown_hours)
+
+    vow = BINDING_VOWS[vow_name]
+    multiplier = vow["kill_multiplier"] if action == "kill" else vow["save_multiplier"]
+    return max(0.0, base_cooldown_hours * multiplier)
+
+
+def format_vow_label(vow_name: str | None) -> str:
+    """Returns ' [Vow Name]' for display, or '' if no vow."""
+    if not vow_name or vow_name == "CONFLICT":
+        return ""
+    return f" [{vow_name}]"
+
+
+# =========================
+# OTHER CONFIG
+# =========================
+
 DEGLOVE_ROLES = {"Shit ass mod", "Good Moderator Morning!"}
 
-# Channel names
 DEADLY_SENTENCES_CHANNEL = "deadly-sentences"
 MODLOG_CHANNEL = "modlog"
-
-# Banned role name to assign during deglove
 BANNED_ROLE_NAME = "Banned"
 
-# Stores active deglovings:
 # { member_id: { "role_ids": [int], "message_id": int, "channel_id": int, "task": Task } }
 active_deglovings = {}
 
@@ -137,12 +153,10 @@ last_used = {}
 # =========================
 
 async def log_error(guild, label: str, error: Exception):
-    """Sends an error message to #modlog and prints to console."""
     tb = traceback.format_exc()
     print(f"[ERROR] {label}: {error}\n{tb}")
     modlog = discord.utils.get(guild.text_channels, name=MODLOG_CHANNEL)
     if modlog:
-        # Truncate traceback if it's very long
         tb_trimmed = tb[-1500:] if len(tb) > 1500 else tb
         await modlog.send(
             f"⚠️ **Bot Error — {label}**\n"
@@ -156,10 +170,6 @@ async def on_ready():
 
 
 def parse_duration(duration_str):
-    """
-    Parses a duration string like '10m', '2h', '1d', '30s' into total seconds.
-    Returns None if the format is invalid.
-    """
     match = re.fullmatch(r"(\d+)(s|m|h|d)", duration_str.strip().lower())
     if not match:
         return None
@@ -169,12 +179,10 @@ def parse_duration(duration_str):
 
 
 async def reglove_member(guild, member, announce_channel):
-    """Restores a member's roles after deglove ends (or is cut short by !reglove)."""
     entry = active_deglovings.pop(member.id, None)
     if not entry:
         return
 
-    # Cancel the scheduled task if it's still running
     task = entry.get("task")
     if task and not task.done():
         task.cancel()
@@ -183,7 +191,6 @@ async def reglove_member(guild, member, announce_channel):
     message_id = entry.get("message_id")
     channel_id = entry.get("channel_id")
 
-    # Remove Banned role
     banned_role = discord.utils.get(guild.roles, name=BANNED_ROLE_NAME)
     if banned_role and banned_role in member.roles:
         try:
@@ -191,7 +198,6 @@ async def reglove_member(guild, member, announce_channel):
         except Exception as e:
             await log_error(guild, f"reglove: remove Banned role from {member}", e)
 
-    # Re-fetch role objects fresh from the guild by ID to avoid stale references
     bot_top_role = guild.me.top_role
     roles_to_restore = []
     for role_id in saved_role_ids:
@@ -217,9 +223,11 @@ async def reglove_member(guild, member, announce_channel):
         print(msg)
         modlog = discord.utils.get(guild.text_channels, name=MODLOG_CHANNEL)
         if modlog:
-            await modlog.send(f"⚠️ **Reglove warning:** No roles could be restored for {member.mention}. Saved IDs: `{saved_role_ids}`")
+            await modlog.send(
+                f"⚠️ **Reglove warning:** No roles could be restored for {member.mention}. "
+                f"Saved IDs: `{saved_role_ids}`"
+            )
 
-    # Delete the sentence message — fetch fresh by ID so the reference isn't stale
     if channel_id and message_id:
         try:
             sentence_channel = guild.get_channel(channel_id)
@@ -237,24 +245,16 @@ async def reglove_member(guild, member, announce_channel):
 
 @bot.command(name="deglove")
 async def deglove(ctx, duration: str = None, *, reason: str = None):
-    """
-    Usage (as a reply): !deglove <duration> <reason>
-    Duration format: 30s, 10m, 2h, 1d
-    Requires "Shit ass mod" or "Good Moderator Morning!" role.
-    """
     author_roles = {role.name for role in ctx.author.roles}
 
-    # Permission check
     if not (author_roles & DEGLOVE_ROLES):
         await ctx.send(f"{ctx.author.mention}, you don't have permission to deglove.")
         return
 
-    # Must be a reply
     if not ctx.message.reference:
         await ctx.send("You need to reply to someone's message to deglove them.")
         return
 
-    # Duration required
     if not duration:
         await ctx.send("Usage: `!deglove <duration> <reason>` (e.g. `!deglove 10m being annoying`)")
         return
@@ -268,7 +268,6 @@ async def deglove(ctx, duration: str = None, *, reason: str = None):
         await ctx.send("Please provide a reason. Usage: `!deglove <duration> <reason>`")
         return
 
-    # Get the target member
     try:
         replied_message = await ctx.channel.fetch_message(ctx.message.reference.message_id)
     except Exception as e:
@@ -286,18 +285,15 @@ async def deglove(ctx, duration: str = None, *, reason: str = None):
         await ctx.send("You can't deglove a bot.")
         return
 
-    # Check if already degloved
     if member.id in active_deglovings:
         await ctx.send(f"{member.mention} is already degloved.")
         return
 
-    # Get Banned role
     banned_role = discord.utils.get(ctx.guild.roles, name=BANNED_ROLE_NAME)
     if not banned_role:
         await ctx.send(f'Could not find a role named "{BANNED_ROLE_NAME}". Make sure it exists.')
         return
 
-    # Save role IDs (not objects) — avoids stale references when the timer fires later
     bot_top_role = ctx.guild.me.top_role
     saved_role_ids = [
         r.id for r in member.roles
@@ -305,7 +301,6 @@ async def deglove(ctx, duration: str = None, *, reason: str = None):
     ]
     print(f"[deglove] Saving role IDs for {member}: {saved_role_ids}")
 
-    # Remove all saveable roles
     roles_to_remove = [ctx.guild.get_role(rid) for rid in saved_role_ids]
     roles_to_remove = [r for r in roles_to_remove if r]
     if roles_to_remove:
@@ -320,7 +315,6 @@ async def deglove(ctx, duration: str = None, *, reason: str = None):
             await log_error(ctx.guild, f"deglove: remove roles from {member}", e)
             return
 
-    # Add Banned role
     try:
         await member.add_roles(banned_role, reason=f"Degloved by {ctx.author}: {reason}")
     except discord.Forbidden as e:
@@ -334,7 +328,6 @@ async def deglove(ctx, duration: str = None, *, reason: str = None):
         await log_error(ctx.guild, f"deglove: add Banned role to {member}", e)
         return
 
-    # Post in #deadly-sentences — store message ID and channel ID, not the object
     sentence_channel = discord.utils.get(ctx.guild.text_channels, name=DEADLY_SENTENCES_CHANNEL)
     message_id = None
     channel_id = None
@@ -356,7 +349,6 @@ async def deglove(ctx, duration: str = None, *, reason: str = None):
     await ctx.send("https://klipy.com/gifs/gojo-geto-suguru-2--k01KQGSQKMYQQE758SGTJ41WF3X")
     await ctx.send(f"{member.mention} has been sealed for {duration}")
 
-    # Store entry first, then create task
     active_deglovings[member.id] = {
         "role_ids": saved_role_ids,
         "message_id": message_id,
@@ -370,7 +362,7 @@ async def deglove(ctx, duration: str = None, *, reason: str = None):
             if member.id in active_deglovings:
                 await reglove_member(ctx.guild, member, ctx.channel)
         except asyncio.CancelledError:
-            pass  # Task was cancelled by !reglove, that's fine
+            pass
         except Exception as e:
             await log_error(ctx.guild, f"scheduled_reglove for {member}", e)
 
@@ -380,19 +372,12 @@ async def deglove(ctx, duration: str = None, *, reason: str = None):
 
 @bot.command(name="reglove")
 async def reglove(ctx):
-    """
-    Usage (as a reply): !reglove
-    Cuts a deglove short early and restores the member's roles.
-    Requires "Shit ass mod" or "Good Moderator Morning!" role.
-    """
     author_roles = {role.name for role in ctx.author.roles}
 
-    # Permission check
     if not (author_roles & DEGLOVE_ROLES):
         await ctx.send(f"{ctx.author.mention}, you don't have permission to reglove.")
         return
 
-    # Must be a reply
     if not ctx.message.reference:
         await ctx.send("You need to reply to the message of the person you want to reglove.")
         return
@@ -440,41 +425,62 @@ async def on_message(message):
             return
 
         best_role = min(valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
-        cooldown_hours = ROLE_COOLDOWNS[best_role]
+        base_cooldown_hours = ROLE_COOLDOWNS[best_role]
+        vow = get_active_vow(author_roles)
+        vow_str = format_vow_label(vow)
 
-        # Apply GregVow modifier
-        if SPECIAL_ROLE in author_roles:
-            cooldown_hours *= 2
+        # Conflict: user holds more than one Binding Vow (shouldn't happen, but handle it)
+        if vow == "CONFLICT":
+            await message.channel.send(
+                f"{message.author.mention}, ⚠️ you have multiple Binding Vow roles — "
+                f"vows are being ignored until this is resolved."
+            )
+            return
+
+        if base_cooldown_hours == 0:
+            await message.channel.send(
+                f"{message.author.mention}, ({best_role}{vow_str}) you have no cooldown 😈"
+            )
+            return
+
+        # Show kill and save CDs separately only when Healing Vow is active (they differ)
+        kill_cd = apply_vow(base_cooldown_hours, "kill", vow)
+        save_cd = apply_vow(base_cooldown_hours, "save", vow)
 
         now = datetime.utcnow()
         last = last_used.get(message.author.id)
 
-        if cooldown_hours == 0:
-            await message.channel.send(
-                f"{message.author.mention}, ({best_role}) you have no cooldown 😈"
-            )
-            return
+        def format_cd(hours: float) -> str:
+            if hours <= 0:
+                return "ready instantly ✅"
+            td = timedelta(hours=hours)
+            if not last or now - last >= td:
+                return "ready ✅"
+            remaining = td - (now - last)
+            return f"**{str(remaining).split('.')[0]}** remaining"
 
-        if not last or now - last >= timedelta(hours=cooldown_hours):
+        if kill_cd == save_cd:
             await message.channel.send(
-                f"{message.author.mention}, ({best_role}) you're ready to use a GIF."
+                f"{message.author.mention}, ({best_role}{vow_str}) cooldown: {format_cd(kill_cd)}"
             )
         else:
-            remaining = timedelta(hours=cooldown_hours) - (now - last)
             await message.channel.send(
-                f"{message.author.mention}, ({best_role}) cooldown remaining: {str(remaining).split('.')[0]}"
+                f"{message.author.mention}, ({best_role}{vow_str})\n"
+                f"☠️ Kill CD: {format_cd(kill_cd)}\n"
+                f"💚 Save CD: {format_cd(save_cd)}"
             )
-
         return
 
-    # MUST BE A REPLY
+    # MUST BE A REPLY TO TRIGGER GIF ACTIONS
     if not message.reference:
         await bot.process_commands(message)
         return
 
     content = message.content
+    is_kill_gif = any(gif in content for gif in TARGET_GIFS)
+    is_save_gif = any(gif in content for gif in UNTIMEOUT_GIFS)
 
-    if not (any(gif in content for gif in TARGET_GIFS) or any(gif in content for gif in UNTIMEOUT_GIFS)):
+    if not (is_kill_gif or is_save_gif):
         await bot.process_commands(message)
         return
 
@@ -486,12 +492,10 @@ async def on_message(message):
         return
 
     member_to_timeout = message.guild.get_member(replied_message.author.id)
-
     if not member_to_timeout:
         return
 
     valid_roles = [r for r in author_roles if r in ROLE_COOLDOWNS]
-
     if not valid_roles:
         await message.channel.send(
             f"{message.author.mention}, you don't have permission to use this GIF!"
@@ -499,28 +503,40 @@ async def on_message(message):
         return
 
     best_role = min(valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
-    cooldown_hours = ROLE_COOLDOWNS[best_role]
+    base_cooldown_hours = ROLE_COOLDOWNS[best_role]
 
-    # Apply GregVow modifier
-    is_special = SPECIAL_ROLE in author_roles
-    if is_special:
-        cooldown_hours *= 3
+    vow = get_active_vow(author_roles)
+
+    # Conflict: user holds more than one Binding Vow
+    if vow == "CONFLICT":
+        await message.channel.send(
+            f"{message.author.mention}, ⚠️ you have multiple Binding Vow roles — "
+            f"vows are being ignored until this is resolved."
+        )
+        # Fall through with no vow applied
+        vow = None
+
+    action = "kill" if is_kill_gif else "save"
+    effective_cooldown_hours = apply_vow(base_cooldown_hours, action, vow)
+    vow_str = format_vow_label(vow)
 
     now = datetime.utcnow()
     last = last_used.get(message.author.id)
 
-    if cooldown_hours > 0 and last:
-        if now - last < timedelta(hours=cooldown_hours):
-            remaining = timedelta(hours=cooldown_hours) - (now - last)
+    # Cooldown check (skip if effective cooldown is 0)
+    if effective_cooldown_hours > 0 and last:
+        if now - last < timedelta(hours=effective_cooldown_hours):
+            remaining = timedelta(hours=effective_cooldown_hours) - (now - last)
             await message.channel.send(
-                f"{message.author.mention}, ({best_role}) cooldown remaining: {str(remaining).split('.')[0]}"
+                f"{message.author.mention}, ({best_role}{vow_str}) cooldown remaining: "
+                f"{str(remaining).split('.')[0]}"
             )
             return
 
     # =========================
-    # UNTIMEOUT
+    # SAVE GIF → UNTIMEOUT
     # =========================
-    if any(gif in content for gif in UNTIMEOUT_GIFS):
+    if is_save_gif:
         if not member_to_timeout.timed_out_until:
             await message.channel.send("They're not even timed out bro 💀")
             return
@@ -532,38 +548,47 @@ async def on_message(message):
                 await member_to_timeout.timeout(None)
                 last_used[message.author.id] = now
                 await message.channel.send(
-                    f"{member_to_timeout.mention} has been freed early by {message.author.mention}"
+                    f"{member_to_timeout.mention} has been freed early by "
+                    f"{message.author.mention}{vow_str}"
                 )
             except Exception as e:
-                await message.channel.send(f"Failed to remove timeout.")
-                await log_error(message.guild, f"untimeout: remove timeout from {member_to_timeout}", e)
+                await message.channel.send("Failed to remove timeout.")
+                await log_error(
+                    message.guild,
+                    f"untimeout: remove timeout from {member_to_timeout}",
+                    e
+                )
         else:
             await message.channel.send(
                 f"Too long left on timeout ({int(remaining.total_seconds())}s). Can't save them."
             )
 
+        await bot.process_commands(message)
         return
 
     # =========================
-    # TIMEOUT
+    # KILL GIF → TIMEOUT
     # =========================
-    if any(gif in content for gif in TARGET_GIFS):
+    if is_kill_gif:
+        # Destruction Vow: 3x timeout duration (180s), otherwise base 90s
+        timeout_duration = 180 if vow == "Destruction Vow" else TIMEOUT_SECONDS
+
         try:
-            duration = 180 if is_special else TIMEOUT_SECONDS
-
             await member_to_timeout.timeout(
-                discord.utils.utcnow() + timedelta(seconds=duration)
+                discord.utils.utcnow() + timedelta(seconds=timeout_duration)
             )
-
             last_used[message.author.id] = now
-
             await message.channel.send(
-                f"{member_to_timeout.mention} has been timed out for {duration}s by {message.author.mention} lmao"
+                f"{member_to_timeout.mention} has been timed out for {timeout_duration}s "
+                f"by {message.author.mention}{vow_str} lmao"
             )
-
         except Exception as e:
             await message.channel.send(f"Failed to timeout {member_to_timeout.mention}.")
-            await log_error(message.guild, f"timeout: apply timeout to {member_to_timeout}", e)
+            await log_error(
+                message.guild,
+                f"timeout: apply timeout to {member_to_timeout}",
+                e
+            )
 
     await bot.process_commands(message)
 
@@ -587,8 +612,6 @@ async def on_reaction_add(reaction, user):
 
 @bot.event
 async def on_command_error(ctx, error):
-    """Catches any unhandled command errors and logs them to #modlog."""
-    # Ignore expected non-errors
     if isinstance(error, commands.CommandNotFound):
         return
     await log_error(ctx.guild, f"command error in #{ctx.channel.name} by {ctx.author}", error)

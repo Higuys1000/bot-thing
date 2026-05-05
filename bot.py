@@ -72,13 +72,23 @@ ROLE_COOLDOWNS = {
 
 # =========================
 # BINDING VOW SYSTEM
-# A user may hold AT MOST ONE Binding Vow at a time.
-# Each vow defines separate multipliers for kill and save cooldowns.
-# If a user somehow has multiple vow roles, the bot will warn them and ignore all vows.
 #
-# kill_multiplier: applied to the base cooldown after using a kill GIF
-# save_multiplier: applied to the base cooldown after using a save GIF
-#   (result is clamped to >= 0, so a save CD can reach 0 = instant reuse)
+# A user may hold AT MOST ONE Binding Vow at a time.
+# If they somehow hold multiple, all vows are ignored and they get a warning.
+#
+# Standard vows (kill_multiplier / save_multiplier):
+#   kill_multiplier : float | None — multiplied into base kill cooldown.
+#                     None = kill action is fully blocked.
+#   save_multiplier : float | None — multiplied into base save cooldown.
+#                     None = save action is fully blocked.
+#   Result is clamped to >= 0 (so a CD can reach 0 = instant reuse).
+#   apply_vow() returns -1.0 to signal a blocked action.
+#
+# Stack Vow (charge-based, handled separately):
+#   - Cooldown is ×2 the user's base role cooldown.
+#   - Kill and save each have their own pool of up to 3 charges.
+#   - Each charge regenerates independently after one full CD period.
+#   - A user can bank all 3 charges and spend them back-to-back.
 # =========================
 
 BINDING_VOWS = {
@@ -92,14 +102,26 @@ BINDING_VOWS = {
         "save_multiplier": 0.02,   # ÷50
         "description": "Cannot kill / Save CDs ÷50",
     },
+    "Stack Vow": {
+        # Handled via charge system — multipliers not used here
+        "description": "Kill & save CDs ×2, but bank up to 3 uses of each independently",
+    },
 }
+
+STACK_VOW_MULTIPLIER = 2.0
+STACK_VOW_MAX_CHARGES = 3
+
+# Charge state for Stack Vow users.
+# { user_id: { "kill": [datetime, ...], "save": [datetime, ...] } }
+# Each datetime records when that charge was consumed.
+# A charge regenerates after one full CD period has elapsed since consumption.
+stack_vow_charges: dict[int, dict[str, list[datetime]]] = {}
 
 
 def get_active_vow(author_roles: list[str]) -> str | None:
     """
     Returns the single Binding Vow the user holds, or None if they have none.
-    If they somehow hold multiple vows, returns the sentinel string "CONFLICT"
-    so callers can warn them.
+    Returns "CONFLICT" if they somehow hold multiple vows.
     """
     held = [vow for vow in BINDING_VOWS if vow in author_roles]
     if len(held) == 0:
@@ -111,14 +133,13 @@ def get_active_vow(author_roles: list[str]) -> str | None:
 
 def apply_vow(base_cooldown_hours: float, action: str, vow_name: str | None) -> float:
     """
-    Applies the user's single Binding Vow multiplier to a base cooldown.
+    Applies a standard Binding Vow multiplier to a base cooldown.
+    Stack Vow is NOT handled here — use the stack_vow_* helpers instead.
 
-    action: "kill" or "save"
-    vow_name: a key in BINDING_VOWS, or None (no vow), or "CONFLICT" (ignored).
-    Returns -1.0 if the action is blocked by the vow (e.g. Healing Vow can't kill).
+    Returns -1.0 if the action is blocked by the vow.
     Result is otherwise clamped to >= 0.
     """
-    if not vow_name or vow_name == "CONFLICT" or vow_name not in BINDING_VOWS:
+    if not vow_name or vow_name in ("CONFLICT", "Stack Vow") or vow_name not in BINDING_VOWS:
         return max(0.0, base_cooldown_hours)
 
     vow = BINDING_VOWS[vow_name]
@@ -131,10 +152,49 @@ def apply_vow(base_cooldown_hours: float, action: str, vow_name: str | None) -> 
 
 
 def format_vow_label(vow_name: str | None) -> str:
-    """Returns ' [Vow Name]' for display, or '' if no vow."""
+    """Returns ' [Vow Name]' for display, or '' if no vow / conflict."""
     if not vow_name or vow_name == "CONFLICT":
         return ""
     return f" [{vow_name}]"
+
+
+# ---- Stack Vow charge helpers ----
+
+def _get_active_charge_timestamps(user_id: int, action: str, cd_hours: float, now: datetime) -> list[datetime]:
+    """
+    Returns the list of still-on-cooldown charge timestamps for the given action.
+    Expired charges (older than one CD period) are pruned in-place.
+    """
+    user_data = stack_vow_charges.setdefault(user_id, {"kill": [], "save": []})
+    regen_window = timedelta(hours=cd_hours)
+    active = [t for t in user_data[action] if now - t < regen_window]
+    user_data[action] = active
+    return active
+
+
+def stack_vow_available_charges(user_id: int, action: str, cd_hours: float, now: datetime) -> int:
+    """Returns how many charges the user can spend right now."""
+    active = _get_active_charge_timestamps(user_id, action, cd_hours, now)
+    return max(0, STACK_VOW_MAX_CHARGES - len(active))
+
+
+def stack_vow_consume_charge(user_id: int, action: str, now: datetime):
+    """Records that the user spent one charge at the given time."""
+    user_data = stack_vow_charges.setdefault(user_id, {"kill": [], "save": []})
+    user_data[action].append(now)
+
+
+def stack_vow_next_regen(user_id: int, action: str, cd_hours: float, now: datetime) -> timedelta | None:
+    """
+    Returns the time until the next charge regenerates.
+    Returns None if the user is already at max charges.
+    """
+    active = _get_active_charge_timestamps(user_id, action, cd_hours, now)
+    if not active:
+        return None  # Already at max — no regen pending
+    oldest = min(active)
+    regen_at = oldest + timedelta(hours=cd_hours)
+    return max(timedelta(0), regen_at - now)
 
 
 # =========================
@@ -150,7 +210,9 @@ BANNED_ROLE_NAME = "Banned"
 # { member_id: { "role_ids": [int], "message_id": int, "channel_id": int, "task": Task } }
 active_deglovings = {}
 
-last_used = {}
+# Fully independent cooldown timers — kill and save never affect each other.
+last_kill_used: dict[int, datetime] = {}
+last_save_used: dict[int, datetime] = {}
 
 
 # =========================
@@ -418,7 +480,7 @@ async def on_message(message):
     author_roles = [role.name for role in message.author.roles]
 
     # =========================
-    # BOT MENTION → SHOW COOLDOWN
+    # BOT MENTION → SHOW COOLDOWN STATUS
     # =========================
     if bot.user in message.mentions:
         valid_roles = [r for r in author_roles if r in ROLE_COOLDOWNS]
@@ -430,11 +492,12 @@ async def on_message(message):
             return
 
         best_role = min(valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
-        base_cooldown_hours = ROLE_COOLDOWNS[best_role]
+        base_cd = ROLE_COOLDOWNS[best_role]
         vow = get_active_vow(author_roles)
         vow_str = format_vow_label(vow)
+        now = datetime.utcnow()
+        user_id = message.author.id
 
-        # Conflict: user holds more than one Binding Vow (shouldn't happen, but handle it)
         if vow == "CONFLICT":
             await message.channel.send(
                 f"{message.author.mention}, ⚠️ you have multiple Binding Vow roles — "
@@ -442,20 +505,38 @@ async def on_message(message):
             )
             return
 
-        if base_cooldown_hours == 0:
+        if base_cd == 0:
             await message.channel.send(
                 f"{message.author.mention}, ({best_role}{vow_str}) you have no cooldown 😈"
             )
             return
 
-        # Show kill and save CDs separately only when Healing Vow is active (they differ)
-        kill_cd = apply_vow(base_cooldown_hours, "kill", vow)
-        save_cd = apply_vow(base_cooldown_hours, "save", vow)
+        # --- Stack Vow: show charge status ---
+        if vow == "Stack Vow":
+            sv_cd = base_cd * STACK_VOW_MULTIPLIER
 
-        now = datetime.utcnow()
-        last = last_used.get(message.author.id)
+            def charge_status(action: str) -> str:
+                available = stack_vow_available_charges(user_id, action, sv_cd, now)
+                next_regen = stack_vow_next_regen(user_id, action, sv_cd, now)
+                charge_pips = "🟢" * available + "🔴" * (STACK_VOW_MAX_CHARGES - available)
+                if next_regen:
+                    return f"{charge_pips} (next regen in **{str(next_regen).split('.')[0]}**)"
+                return charge_pips
 
-        def format_cd(hours: float) -> str:
+            await message.channel.send(
+                f"{message.author.mention}, ({best_role} [Stack Vow]) CD: {sv_cd:.4g}h per charge\n"
+                f"☠️ Kill charges: {charge_status('kill')}\n"
+                f"💚 Save charges: {charge_status('save')}"
+            )
+            return
+
+        # --- Standard vows: show independent kill/save cooldowns ---
+        kill_cd = apply_vow(base_cd, "kill", vow)
+        save_cd = apply_vow(base_cd, "save", vow)
+        last_kill = last_kill_used.get(user_id)
+        last_save = last_save_used.get(user_id)
+
+        def format_cd(hours: float, last: datetime | None) -> str:
             if hours == -1.0:
                 return "blocked 🚫"
             if hours <= 0:
@@ -466,15 +547,16 @@ async def on_message(message):
             remaining = td - (now - last)
             return f"**{str(remaining).split('.')[0]}** remaining"
 
-        if kill_cd == save_cd:
+        if kill_cd == save_cd and last_kill == last_save:
+            # Both timers are identical — show a single line for cleanliness
             await message.channel.send(
-                f"{message.author.mention}, ({best_role}{vow_str}) cooldown: {format_cd(kill_cd)}"
+                f"{message.author.mention}, ({best_role}{vow_str}) cooldown: {format_cd(kill_cd, last_kill)}"
             )
         else:
             await message.channel.send(
                 f"{message.author.mention}, ({best_role}{vow_str})\n"
-                f"☠️ Kill CD: {format_cd(kill_cd)}\n"
-                f"💚 Save CD: {format_cd(save_cd)}"
+                f"☠️ Kill CD: {format_cd(kill_cd, last_kill)}\n"
+                f"💚 Save CD: {format_cd(save_cd, last_save)}"
             )
         return
 
@@ -510,42 +592,70 @@ async def on_message(message):
         return
 
     best_role = min(valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
-    base_cooldown_hours = ROLE_COOLDOWNS[best_role]
-
+    base_cd = ROLE_COOLDOWNS[best_role]
     vow = get_active_vow(author_roles)
+    now = datetime.utcnow()
+    user_id = message.author.id
+    action = "kill" if is_kill_gif else "save"
 
-    # Conflict: user holds more than one Binding Vow
     if vow == "CONFLICT":
         await message.channel.send(
             f"{message.author.mention}, ⚠️ you have multiple Binding Vow roles — "
             f"vows are being ignored until this is resolved."
         )
-        # Fall through with no vow applied
         vow = None
 
-    action = "kill" if is_kill_gif else "save"
-    effective_cooldown_hours = apply_vow(base_cooldown_hours, action, vow)
-    vow_str = format_vow_label(vow)
+    # =========================
+    # STACK VOW: charge-based cooldown check
+    # =========================
+    if vow == "Stack Vow":
+        sv_cd = base_cd * STACK_VOW_MULTIPLIER
+        available = stack_vow_available_charges(user_id, action, sv_cd, now)
 
-    # Vow blocks this action entirely
-    if effective_cooldown_hours == -1.0:
-        await message.channel.send(
-            f"{message.author.mention}, your {vow} forbids you from killing. 🩹"
-        )
-        return
-
-    now = datetime.utcnow()
-    last = last_used.get(message.author.id)
-
-    # Cooldown check (skip if effective cooldown is 0)
-    if effective_cooldown_hours > 0 and last:
-        if now - last < timedelta(hours=effective_cooldown_hours):
-            remaining = timedelta(hours=effective_cooldown_hours) - (now - last)
+        if available == 0:
+            next_regen = stack_vow_next_regen(user_id, action, sv_cd, now)
             await message.channel.send(
-                f"{message.author.mention}, ({best_role}{vow_str}) cooldown remaining: "
-                f"{str(remaining).split('.')[0]}"
+                f"{message.author.mention}, [Stack Vow] no {action} charges left — "
+                f"next charge in **{str(next_regen).split('.')[0]}**"
             )
             return
+
+        # Charge available — consume it and proceed to the action
+        stack_vow_consume_charge(user_id, action, now)
+        remaining_after = available - 1
+        vow_str = f" [Stack Vow | {remaining_after}/{STACK_VOW_MAX_CHARGES} {action} charges left]"
+
+    # =========================
+    # STANDARD VOW: multiplier-based cooldown check
+    # =========================
+    else:
+        effective_cd = apply_vow(base_cd, action, vow)
+        vow_str = format_vow_label(vow)
+
+        # Vow blocks this action entirely
+        if effective_cd == -1.0:
+            await message.channel.send(
+                f"{message.author.mention}, your {vow} forbids you from killing. 🩹"
+            )
+            return
+
+        # Check and enforce the independent timer for this specific action
+        last = last_kill_used.get(user_id) if action == "kill" else last_save_used.get(user_id)
+
+        if effective_cd > 0 and last:
+            if now - last < timedelta(hours=effective_cd):
+                remaining = timedelta(hours=effective_cd) - (now - last)
+                await message.channel.send(
+                    f"{message.author.mention}, ({best_role}{vow_str}) cooldown remaining: "
+                    f"{str(remaining).split('.')[0]}"
+                )
+                return
+
+        # Stamp only the timer for this action — the other is unaffected
+        if action == "kill":
+            last_kill_used[user_id] = now
+        else:
+            last_save_used[user_id] = now
 
     # =========================
     # SAVE GIF → UNTIMEOUT
@@ -560,7 +670,6 @@ async def on_message(message):
         if remaining.total_seconds() <= 90:
             try:
                 await member_to_timeout.timeout(None)
-                last_used[message.author.id] = now
                 await message.channel.send(
                     f"{member_to_timeout.mention} has been freed early by "
                     f"{message.author.mention}{vow_str}"
@@ -584,14 +693,12 @@ async def on_message(message):
     # KILL GIF → TIMEOUT
     # =========================
     if is_kill_gif:
-        # Destruction Vow: 3x timeout duration (180s), otherwise base 90s
         timeout_duration = 180 if vow == "Destruction Vow" else TIMEOUT_SECONDS
 
         try:
             await member_to_timeout.timeout(
                 discord.utils.utcnow() + timedelta(seconds=timeout_duration)
             )
-            last_used[message.author.id] = now
             await message.channel.send(
                 f"{member_to_timeout.mention} has been timed out for {timeout_duration}s "
                 f"by {message.author.mention}{vow_str} lmao"

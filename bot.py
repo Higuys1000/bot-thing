@@ -62,7 +62,8 @@ TARGET_GIFS = [
     "https://tenor.com/view/nanami-nanami-kento-haruta-shigemo-haruta-shigemo-gif-17001883660336100989",
     "https://tenor.com/view/reggie-megumi-divine-dog-totality-jujutsu-kaisen-gif-16803502898948526832",
     "https://tenor.com/view/megumi-reggie-star-max-elephant-jujutsu-kaisen-gif-17848841313289141645",
-    "https://tenor.com/view/hazenoki-iori-iori-hazenoki-reggie-reggie-star-gif-15470925985641586022"
+    "https://tenor.com/view/hazenoki-iori-iori-hazenoki-reggie-reggie-star-gif-15470925985641586022",
+    "https://tenor.com/view/ryu-ishigori-kurourushi-and-uro-takako-gif-10500026154609357939"
 ]
 
 UNTIMEOUT_GIFS = [
@@ -87,7 +88,8 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/american-gif-27543431",
     "https://tenor.com/view/peter-griffin-gif-12194285640126683264",
     "https://tenor.com/view/yuta-okkotsu-vs-ryu-ishigori-apply-gif-48656283840648220",
-    "https://tenor.com/view/big-brain-cell-gif-11009529955506497046"
+    "https://tenor.com/view/big-brain-cell-gif-11009529955506497046",
+    "https://tenor.com/view/yourrage-chair-bounce-yourrage-bounce-yourrage-gif-6221615739239256499"
 ]
 
 TIMEOUT_SECONDS = 90

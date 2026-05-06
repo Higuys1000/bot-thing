@@ -70,18 +70,24 @@ UNTIMEOUT_GIFS = [
     "https://klipy.com/gifs/doctor-manhattan-watchmen",
     "https://tenor.com/view/revive-gif-23866294",
     "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664"
-    "https://tenor.com/onF9Vf3cHMO.gif",
-    "https://tenor.com/ivDIWgkDkDv.gif",
+    "https://tenor.com/view/todo-jjk-jujutsu-kaisen-shibuya-arc-mahito-gif-11933159284027340768",
+    "https://tenor.com/view/the-boys-homelander-season-5-tung-tung-tung-sahur-tung-tung-sahur-gif-7005128074439649595",
     "https://tenor.com/view/he-has-me-gif-13654467562542512739",
-    "https://tenor.com/hpUwFpPR9uO.gif",
-    "https://tenor.com/gxFat3FEapG.gif",
-    "https://tenor.com/gFHyueznjs6.gif",
-    "https://tenor.com/MYbN.gif",
-    "https://tenor.com/cNyjFADRNTl.gif",
-    "https://tenor.com/bJKg7.gif",
-    "https://tenor.com/maZbVIbE3Pr.gif",
-    "https://tenor.com/pyF0khnkBOB.gif",
-    "https://tenor.com/view/ryu-ryu-ishigori-yuta-yuta-okkotsu-jujutsu-kaisen-gif-8459438190665096786"
+    "https://tenor.com/view/ryomen-sukuna-sukuna-ryomen-sukuna-ryomen-megumi-fushiguro-gif-6088274754816185868",
+    "https://tenor.com/view/jjk-jujutsu-kaisen-yuta-yuta-okkotsu-okkotsu-gif-5353918859104233890",
+    "https://tenor.com/view/higuruma-jjk-jujutsu-kaisen-jujutsukaisen-retrial-gif-5462736760420847458",
+    "https://tenor.com/view/overwatch-gif-9248765",
+    "https://tenor.com/view/jjk-jujutsu-kaisen-season-2-nobara-kugisaki-itadori-yuji-gif-2211818749172123653",
+    "https://tenor.com/view/lol-gif-23256631",
+    "https://tenor.com/view/ohmmm-cartman-gif-10082733958201247483",
+    "https://tenor.com/view/thumbs-up-gif-12921332806977950807",
+    "https://tenor.com/view/ryu-ryu-ishigori-yuta-yuta-okkotsu-jujutsu-kaisen-gif-8459438190665096786",
+    "https://tenor.com/view/cat-cats-rigby-rigby-the-cat-rigby-cat-gif-12777307700590236451",
+    "https://tenor.com/view/israel-israel-superhero-am-yisrael-chai-israeli-flag-gif-16069792012856888850",
+    "https://tenor.com/view/american-gif-27543431",
+    "https://tenor.com/view/peter-griffin-gif-12194285640126683264",
+    "https://tenor.com/view/yuta-okkotsu-vs-ryu-ishigori-apply-gif-48656283840648220",
+    "https://tenor.com/view/big-brain-cell-gif-11009529955506497046"
 ]
 
 TIMEOUT_SECONDS = 90

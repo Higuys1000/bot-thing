@@ -6,7 +6,6 @@ import os
 import asyncio
 import re
 import traceback
-import json
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -26,20 +25,44 @@ TARGET_GIFS = [
     "https://tenor.com/view/joe-swanson-gets-sent-to-the-shadow-realm-gif-12569580727382074039",
     "https://tenor.com/view/avatar-eyes-mark-philips-rdcworld1-i-have-awoken-rdc-gif-11037312579902835094",
     "https://tenor.com/view/xenoverse-goku-super-saiyan-angry-dbz-gif-1416275111944307575",
-    "https://tenor.com/v3Hf08v2vRk.gif",
-    "https://tenor.com/pZ9FvlIB584.gif",
+    "https://tenor.com/view/yuta-yuta-okkotsu-jujutsu-kaisen-jjk-anime-gif-18377052283740449128",
+    "https://tenor.com/view/mahito-mechamaru-jujutsu-kaisen-fight-jjk-gif-13293311021769477196",
     "https://tenor.com/view/naoya-jujutsu-kaisen-jujutsu-kaisen-season-3-maki-maki-zenin-gif-13642749527516671169",
-    "https://tenor.com/bO4gv.gif",
+    "https://tenor.com/view/fnaf-fnaf4-freddy-freddy-fazbear-nightmare-freddy-gif-24525113",
     "https://tenor.com/view/gojo-gojo-satoru-gojo-season-2-hip-thrust-reaction-gif-10399129046512126318",
-    "https://tenor.com/g1PMKnVanu.gif",
-    "https://tenor.com/gCWUsSmNiKZ.gif",
-    "https://tenor.com/bG6Lk.gif",
-    "https://tenor.com/1nKPZe19HC.gif",
-    "https://tenor.com/hePTjbsH6wO.gif",
-    "https://tenor.com/s5LleKfiFIt.gif",
-    "https://tenor.com/qiJpIenIjHB.gif",
-    "https://tenor.com/fNMtMSKEIch.gif",
-    "https://tenor.com/view/goku-black-goku-black-shush-zamasu-gif-5057528923283903671"
+    "https://tenor.com/view/megumi-fushiguro-fushi-guro-megumi-fushiguro-mahoraga-gif-92941122665464082",
+    "https://tenor.com/view/gojo-geto-suguru-gojo-satoru-kenjaku-prison-realm-gif-5425478000746110355",
+    "https://tenor.com/view/killer-queen-bites-the-dust-gif-22628088",
+    "https://tenor.com/view/kokichi-muta-vs-mahito-strong-gif-720433162054802054",
+    "https://tenor.com/view/dhruv-dhruv-lakdawalla-yuta-yuta-jjk-jujutsu-kaisen-gif-5938354836642012188",
+    "https://tenor.com/view/david-martinez-mag-dump-blick-david-blicktinez-cyberpunk-gif-15887120100692089819",
+    "https://tenor.com/view/sukuna-mahoraga-feint-cleave-dismantle-gif-13544783209250889853",
+    "https://tenor.com/view/l-fap-los-gif-4732809238593749211",
+    "https://tenor.com/view/goku-black-goku-black-shush-zamasu-gif-5057528923283903671",
+    "https://klipy.com/gifs/bowser-fart-3",
+    "https://tenor.com/view/jujutsu-kaisen-jjk-anime-capped-through-the-dome-gif-14392986505181725674",
+    "https://tenor.com/view/punch-gif-11426619910221365543",
+    "https://tenor.com/view/naoya-naoya-zenin-choso-jujutsu-kaisen-anime-gif-7928374921195313568",
+    "https://tenor.com/view/maki-zenin-perfect-preparation-jjk-jujutsu-kaisen-jjk-s3-gif-9326251013866579573",
+    "https://tenor.com/view/homelander-the-boys-black-noir-homelander-kill-homelander-and-black-noir-gif-26428738",
+    "https://tenor.com/view/move-move-outta-way-get-the-fuck-out-of-my-way-push-past-push-person-over-gif-1520289070937279009",
+    "https://tenor.com/view/makima-bang-gif-21311375",
+    "https://tenor.com/view/open-season-shaw-deer-run-over-meme-gif-12251156658227451666",
+    "https://tenor.com/view/mahito-curse-yuji-black-flash-kokusen-gif-15575468419961292171",
+    "https://tenor.com/view/baki-yujiro-hanma-yujiro-gif-17873266028238581190",
+    "https://tenor.com/view/jjk-jjk-s2-jjk-season-2-jujutsu-kaisen-jujutsu-kaisen-s2-gif-7964484372484357392",
+    "https://tenor.com/view/chainsaw-man-kon-katana-man-samurai-sword-katana-devil-gif-27183536",
+    "https://tenor.com/view/israel-palpatine-netanyahu-benjamin-netanyahu-star-wars-gif-3844839225312481092",
+    "https://tenor.com/view/epstein-diddy-epstein-vs-diddy-domain-expansion-gif-16007208464559825312",
+    "https://tenor.com/view/sinisterbart-ryomen-sukuna-jjk-gojo-satoru-gojo-gif-3626682422769793141",
+    "https://tenor.com/view/baby-screaming-polvo-fuego-fire-baby-meme-gif-10034606886425990272",
+    "https://tenor.com/view/vaporized-family-guy-joe-swanson-death-gif-3135054252562901052",
+    "https://tenor.com/view/yuji-jjk-yuji12-gif-678454138725285911",
+    "https://tenor.com/view/megumi-fushiguro-fushiguro-megumi-megumi-fushiguro-toji-fushiguro-gif-14764636942047131755",
+    "https://tenor.com/view/nanami-nanami-kento-haruta-shigemo-haruta-shigemo-gif-17001883660336100989",
+    "https://tenor.com/view/reggie-megumi-divine-dog-totality-jujutsu-kaisen-gif-16803502898948526832",
+    "https://tenor.com/view/megumi-reggie-star-max-elephant-jujutsu-kaisen-gif-17848841313289141645",
+    "https://tenor.com/view/hazenoki-iori-iori-hazenoki-reggie-reggie-star-gif-15470925985641586022"
 ]
 
 UNTIMEOUT_GIFS = [
@@ -47,18 +70,25 @@ UNTIMEOUT_GIFS = [
     "https://klipy.com/gifs/doctor-manhattan-watchmen",
     "https://tenor.com/view/revive-gif-23866294",
     "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664"
-    "https://tenor.com/onF9Vf3cHMO.gif",
-    "https://tenor.com/ivDIWgkDkDv.gif",
-    "https://tenor.com/qqPLKMoUvl1.gif",
-    "https://tenor.com/hpUwFpPR9uO.gif",
-    "https://tenor.com/gxFat3FEapG.gif",
-    "https://tenor.com/gFHyueznjs6.gif",
-    "https://tenor.com/MYbN.gif",
-    "https://tenor.com/cNyjFADRNTl.gif",
-    "https://tenor.com/bJKg7.gif",
-    "https://tenor.com/maZbVIbE3Pr.gif",
-    "https://tenor.com/pyF0khnkBOB.gif",
-    "https://tenor.com/view/ryu-ryu-ishigori-yuta-yuta-okkotsu-jujutsu-kaisen-gif-8459438190665096786"
+    "https://tenor.com/view/todo-jjk-jujutsu-kaisen-shibuya-arc-mahito-gif-11933159284027340768",
+    "https://tenor.com/view/the-boys-homelander-season-5-tung-tung-tung-sahur-tung-tung-sahur-gif-7005128074439649595",
+    "https://tenor.com/view/he-has-me-gif-13654467562542512739",
+    "https://tenor.com/view/ryomen-sukuna-sukuna-ryomen-sukuna-ryomen-megumi-fushiguro-gif-6088274754816185868",
+    "https://tenor.com/view/jjk-jujutsu-kaisen-yuta-yuta-okkotsu-okkotsu-gif-5353918859104233890",
+    "https://tenor.com/view/higuruma-jjk-jujutsu-kaisen-jujutsukaisen-retrial-gif-5462736760420847458",
+    "https://tenor.com/view/overwatch-gif-9248765",
+    "https://tenor.com/view/jjk-jujutsu-kaisen-season-2-nobara-kugisaki-itadori-yuji-gif-2211818749172123653",
+    "https://tenor.com/view/lol-gif-23256631",
+    "https://tenor.com/view/ohmmm-cartman-gif-10082733958201247483",
+    "https://tenor.com/view/thumbs-up-gif-12921332806977950807",
+    "https://tenor.com/view/ryu-ryu-ishigori-yuta-yuta-okkotsu-jujutsu-kaisen-gif-8459438190665096786",
+    "https://tenor.com/view/cat-cats-rigby-rigby-the-cat-rigby-cat-gif-12777307700590236451",
+    "https://tenor.com/view/israel-israel-superhero-am-yisrael-chai-israeli-flag-gif-16069792012856888850",
+    "https://tenor.com/view/american-gif-27543431",
+    "https://tenor.com/view/peter-griffin-gif-12194285640126683264",
+    "https://tenor.com/view/yuta-okkotsu-vs-ryu-ishigori-apply-gif-48656283840648220",
+    "https://tenor.com/view/big-brain-cell-gif-11009529955506497046",
+    "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664"
 ]
 
 TIMEOUT_SECONDS = 90
@@ -217,28 +247,7 @@ DEADLY_SENTENCES_CHANNEL = "deadly-sentences"
 MODLOG_CHANNEL = "modlog"
 BANNED_ROLE_NAME = "Banned"
 
-DEGLOVINGS_FILE = "active_deglovings.json"
-
-def save_deglovings():
-    data = {
-        str(member_id): {
-            "role_ids": entry["role_ids"],
-            "message_id": entry["message_id"],
-            "channel_id": entry["channel_id"],
-            "reglove_at": entry["reglove_at"],
-        }
-        for member_id, entry in active_deglovings.items()
-    }
-    with open(DEGLOVINGS_FILE, "w") as f:
-        json.dump(data, f)
-
-def load_deglovings():
-    if not os.path.exists(DEGLOVINGS_FILE):
-        return {}
-    with open(DEGLOVINGS_FILE, "r") as f:
-        return json.load(f)
-
-# { member_id: { "role_ids": [int], "message_id": int, "channel_id": int, "task": Task, "reglove_at": str } }
+# { member_id: { "role_ids": [int], "message_id": int, "channel_id": int, "task": Task } }
 active_deglovings = {}
 
 # Fully independent cooldown timers — kill and save never affect each other.
@@ -266,45 +275,6 @@ async def log_error(guild, label: str, error: Exception):
 async def on_ready():
     print(f"Logged in as {bot.user}")
 
-    saved = load_deglovings()
-    for member_id_str, entry in saved.items():
-        member_id = int(member_id_str)
-        reglove_at = datetime.fromisoformat(entry["reglove_at"])
-        now = datetime.utcnow()
-        remaining = (reglove_at - now).total_seconds()
-
-        active_deglovings[member_id] = {
-            "role_ids": entry["role_ids"],
-            "message_id": entry["message_id"],
-            "channel_id": entry["channel_id"],
-            "reglove_at": entry["reglove_at"],
-            "task": None,
-        }
-
-        async def scheduled_reglove(mid=member_id, secs=max(remaining, 0)):
-            try:
-                await asyncio.sleep(secs)
-                guild = bot.guilds[0] if bot.guilds else None
-                if guild and mid in active_deglovings:
-                    member = guild.get_member(mid)
-                    if member:
-                        channel_id = active_deglovings[mid].get("channel_id")
-                        announce_channel = guild.get_channel(channel_id) if channel_id else None
-                        await reglove_member(guild, member, announce_channel)
-                    else:
-                        active_deglovings.pop(mid, None)
-                        save_deglovings()
-            except asyncio.CancelledError:
-                pass
-            except Exception as e:
-                guild = bot.guilds[0] if bot.guilds else None
-                if guild:
-                    await log_error(guild, f"on_ready scheduled_reglove for {mid}", e)
-
-        task = asyncio.create_task(scheduled_reglove())
-        active_deglovings[member_id]["task"] = task
-        print(f"[on_ready] Rebuilt deglove timer for member {member_id}, {max(remaining, 0):.0f}s remaining")
-
 
 def parse_duration(duration_str):
     match = re.fullmatch(r"(\d+)(s|m|h|d)", duration_str.strip().lower())
@@ -319,7 +289,6 @@ async def reglove_member(guild, member, announce_channel):
     entry = active_deglovings.pop(member.id, None)
     if not entry:
         return
-    save_deglovings()
 
     task = entry.get("task")
     if task and not task.done():
@@ -480,48 +449,4 @@ async def deglove(ctx, duration: str = None, *, reason: str = None):
             message_id = sentence_message.id
             channel_id = sentence_channel.id
         except Exception as e:
-            await log_error(ctx.guild, "deglove: send deadly-sentences message", e)
-    else:
-        await ctx.send(f'Warning: Could not find channel "{DEADLY_SENTENCES_CHANNEL}" to post the sentence.')
-
-    await ctx.send("https://klipy.com/gifs/gojo-geto-suguru-2--k01KQGSQKMYQQE758SGTJ41WF3X")
-    await ctx.send(f"{member.mention} has been sealed for {duration}")
-
-    active_deglovings[member.id] = {
-        "role_ids": saved_role_ids,
-        "message_id": message_id,
-        "channel_id": channel_id,
-        "task": None,
-        "reglove_at": (datetime.utcnow() + timedelta(seconds=seconds)).isoformat(),
-    }
-    save_deglovings()
-
-    async def scheduled_reglove():
-        try:
-            await asyncio.sleep(seconds)
-            if member.id in active_deglovings:
-                await reglove_member(ctx.guild, member, ctx.channel)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            await log_error(ctx.guild, f"scheduled_reglove for {member}", e)
-
-    task = asyncio.create_task(scheduled_reglove())
-    active_deglovings[member.id]["task"] = task
-
-
-@bot.command(name="reglove")
-async def reglove(ctx):
-    author_roles = {role.name for role in ctx.author.roles}
-
-    if not (author_roles & DEGLOVE_ROLES):
-        await ctx.send(f"{ctx.author.mention}, you don't have permission to reglove.")
-        return
-
-    if not ctx.message.reference:
-        await ctx.send("You need to reply to the message of the person you want to reglove.")
-        return
-
-    try:
-        replied_message = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-    except Exceptio
+            await log_error(ctx.guild, "deglov

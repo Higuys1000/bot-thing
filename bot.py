@@ -48,7 +48,7 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664"
     "https://tenor.com/onF9Vf3cHMO.gif",
     "https://tenor.com/ivDIWgkDkDv.gif",
-    "https://tenor.com/qqPLKMoUvl1.gif",
+    "https://tenor.com/view/he-has-me-gif-13654467562542512739",
     "https://tenor.com/hpUwFpPR9uO.gif",
     "https://tenor.com/gxFat3FEapG.gif",
     "https://tenor.com/gFHyueznjs6.gif",

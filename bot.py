@@ -1,3 +1,4 @@
+import random
 import discord
 from discord.ext import commands
 from datetime import datetime, timedelta
@@ -66,7 +67,7 @@ ROLE_COOLDOWNS = {
     "Rat": 9,
     "Chud": 4,
     "Otis BFF ❤️": 4,
-    "Shit ass mod": 2,
+    "Shit ass mod": 0,
     "Good Moderator Morning!": 0
 }
 
@@ -102,13 +103,21 @@ BINDING_VOWS = {
         "save_multiplier": 0.02,   # ÷50
         "description": "Cannot kill / Save CDs ÷50",
     },
+    "Hakari Vow": {
+        # No multipliers — cooldown behavior is unchanged.
+        # On kill: 36% chance to mute the target for 4m11s, 64% chance to mute yourself for 90s.
+        # Save GIFs work normally with no special effect.
+        "kill_multiplier": 1.0,
+        "save_multiplier": 1.0,
+        "description": "Kill GIFs: 36% mute target 4m11s / 64% mute yourself 90s",
+    },
     "Stack Vow": {
         # Handled via charge system — multipliers not used here
-        "description": "Kill & save CDs ×2, but bank up to 3 uses of each independently",
+        "description": "Kill & save CDs ×3, but bank up to 3 uses of each independently",
     },
 }
 
-STACK_VOW_MULTIPLIER = 2.0
+STACK_VOW_MULTIPLIER = 3.0
 STACK_VOW_MAX_CHARGES = 3
 
 # Charge state for Stack Vow users.
@@ -695,21 +704,53 @@ async def on_message(message):
     if is_kill_gif:
         timeout_duration = 180 if vow == "Destruction Vow" else TIMEOUT_SECONDS
 
-        try:
-            await member_to_timeout.timeout(
-                discord.utils.utcnow() + timedelta(seconds=timeout_duration)
-            )
-            await message.channel.send(
-                f"{member_to_timeout.mention} has been timed out for {timeout_duration}s "
-                f"by {message.author.mention}{vow_str} lmao"
-            )
-        except Exception as e:
-            await message.channel.send(f"Failed to timeout {member_to_timeout.mention}.")
-            await log_error(
-                message.guild,
-                f"timeout: apply timeout to {member_to_timeout}",
-                e
-            )
+        # Hakari Vow: gamble on every kill — 36% hit, 64% self-mute
+        if vow == "Hakari Vow":
+            if random.random() < 0.36:
+                # WIN — mute the target for 4m11s (251 seconds)
+                try:
+                    await member_to_timeout.timeout(
+                        discord.utils.utcnow() + timedelta(seconds=251)
+                    )
+                    await message.channel.send(
+                        f"🎰 **JACKPOT!** {member_to_timeout.mention} has been muted for 4m11s "
+                        f"by {message.author.mention} [Hakari Vow] lmao"
+                    )
+                except Exception as e:
+                    await message.channel.send(f"Failed to timeout {member_to_timeout.mention}.")
+                    await log_error(message.guild, f"hakari win: timeout {member_to_timeout}", e)
+            else:
+                # LOSE — mute yourself for 90 seconds
+                author_member = message.guild.get_member(message.author.id)
+                if author_member:
+                    try:
+                        await author_member.timeout(
+                            discord.utils.utcnow() + timedelta(seconds=90)
+                        )
+                        await message.channel.send(
+                            f"💀 {message.author.mention} [Hakari Vow] lost the gamble and muted themselves for 90s lmaooo"
+                        )
+                    except Exception as e:
+                        await message.channel.send("Failed to apply self-mute.")
+                        await log_error(message.guild, f"hakari loss: timeout {author_member}", e)
+                else:
+                    await message.channel.send("Couldn't find you in the server to apply the self-mute??")
+        else:
+            try:
+                await member_to_timeout.timeout(
+                    discord.utils.utcnow() + timedelta(seconds=timeout_duration)
+                )
+                await message.channel.send(
+                    f"{member_to_timeout.mention} has been timed out for {timeout_duration}s "
+                    f"by {message.author.mention}{vow_str} lmao"
+                )
+            except Exception as e:
+                await message.channel.send(f"Failed to timeout {member_to_timeout.mention}.")
+                await log_error(
+                    message.guild,
+                    f"timeout: apply timeout to {member_to_timeout}",
+                    e
+                )
 
     await bot.process_commands(message)
 

@@ -87,7 +87,8 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/american-gif-27543431",
     "https://tenor.com/view/peter-griffin-gif-12194285640126683264",
     "https://tenor.com/view/yuta-okkotsu-vs-ryu-ishigori-apply-gif-48656283840648220",
-    "https://tenor.com/view/big-brain-cell-gif-11009529955506497046"
+    "https://tenor.com/view/big-brain-cell-gif-11009529955506497046",
+    "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664"
 ]
 
 TIMEOUT_SECONDS = 90

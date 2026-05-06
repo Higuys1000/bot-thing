@@ -6,6 +6,7 @@ import os
 import asyncio
 import re
 import traceback
+import json
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -25,44 +26,20 @@ TARGET_GIFS = [
     "https://tenor.com/view/joe-swanson-gets-sent-to-the-shadow-realm-gif-12569580727382074039",
     "https://tenor.com/view/avatar-eyes-mark-philips-rdcworld1-i-have-awoken-rdc-gif-11037312579902835094",
     "https://tenor.com/view/xenoverse-goku-super-saiyan-angry-dbz-gif-1416275111944307575",
-    "https://tenor.com/view/yuta-yuta-okkotsu-jujutsu-kaisen-jjk-anime-gif-18377052283740449128",
-    "https://tenor.com/view/mahito-mechamaru-jujutsu-kaisen-fight-jjk-gif-13293311021769477196",
+    "https://tenor.com/v3Hf08v2vRk.gif",
+    "https://tenor.com/pZ9FvlIB584.gif",
     "https://tenor.com/view/naoya-jujutsu-kaisen-jujutsu-kaisen-season-3-maki-maki-zenin-gif-13642749527516671169",
-    "https://tenor.com/view/fnaf-fnaf4-freddy-freddy-fazbear-nightmare-freddy-gif-24525113",
+    "https://tenor.com/bO4gv.gif",
     "https://tenor.com/view/gojo-gojo-satoru-gojo-season-2-hip-thrust-reaction-gif-10399129046512126318",
-    "https://tenor.com/view/megumi-fushiguro-fushi-guro-megumi-fushiguro-mahoraga-gif-92941122665464082",
-    "https://tenor.com/view/gojo-geto-suguru-gojo-satoru-kenjaku-prison-realm-gif-5425478000746110355",
-    "https://tenor.com/view/killer-queen-bites-the-dust-gif-22628088",
-    "https://tenor.com/view/kokichi-muta-vs-mahito-strong-gif-720433162054802054",
-    "https://tenor.com/view/dhruv-dhruv-lakdawalla-yuta-yuta-jjk-jujutsu-kaisen-gif-5938354836642012188",
-    "https://tenor.com/view/david-martinez-mag-dump-blick-david-blicktinez-cyberpunk-gif-15887120100692089819",
-    "https://tenor.com/view/sukuna-mahoraga-feint-cleave-dismantle-gif-13544783209250889853",
-    "https://tenor.com/view/l-fap-los-gif-4732809238593749211",
-    "https://tenor.com/view/goku-black-goku-black-shush-zamasu-gif-5057528923283903671",
-    "https://klipy.com/gifs/bowser-fart-3",
-    "https://tenor.com/view/jujutsu-kaisen-jjk-anime-capped-through-the-dome-gif-14392986505181725674",
-    "https://tenor.com/view/punch-gif-11426619910221365543",
-    "https://tenor.com/view/naoya-naoya-zenin-choso-jujutsu-kaisen-anime-gif-7928374921195313568",
-    "https://tenor.com/view/maki-zenin-perfect-preparation-jjk-jujutsu-kaisen-jjk-s3-gif-9326251013866579573",
-    "https://tenor.com/view/homelander-the-boys-black-noir-homelander-kill-homelander-and-black-noir-gif-26428738",
-    "https://tenor.com/view/move-move-outta-way-get-the-fuck-out-of-my-way-push-past-push-person-over-gif-1520289070937279009",
-    "https://tenor.com/view/makima-bang-gif-21311375",
-    "https://tenor.com/view/open-season-shaw-deer-run-over-meme-gif-12251156658227451666",
-    "https://tenor.com/view/mahito-curse-yuji-black-flash-kokusen-gif-15575468419961292171",
-    "https://tenor.com/view/baki-yujiro-hanma-yujiro-gif-17873266028238581190",
-    "https://tenor.com/view/jjk-jjk-s2-jjk-season-2-jujutsu-kaisen-jujutsu-kaisen-s2-gif-7964484372484357392",
-    "https://tenor.com/view/chainsaw-man-kon-katana-man-samurai-sword-katana-devil-gif-27183536",
-    "https://tenor.com/view/israel-palpatine-netanyahu-benjamin-netanyahu-star-wars-gif-3844839225312481092",
-    "https://tenor.com/view/epstein-diddy-epstein-vs-diddy-domain-expansion-gif-16007208464559825312",
-    "https://tenor.com/view/sinisterbart-ryomen-sukuna-jjk-gojo-satoru-gojo-gif-3626682422769793141",
-    "https://tenor.com/view/baby-screaming-polvo-fuego-fire-baby-meme-gif-10034606886425990272",
-    "https://tenor.com/view/vaporized-family-guy-joe-swanson-death-gif-3135054252562901052",
-    "https://tenor.com/view/yuji-jjk-yuji12-gif-678454138725285911",
-    "https://tenor.com/view/megumi-fushiguro-fushiguro-megumi-megumi-fushiguro-toji-fushiguro-gif-14764636942047131755",
-    "https://tenor.com/view/nanami-nanami-kento-haruta-shigemo-haruta-shigemo-gif-17001883660336100989",
-    "https://tenor.com/view/reggie-megumi-divine-dog-totality-jujutsu-kaisen-gif-16803502898948526832",
-    "https://tenor.com/view/megumi-reggie-star-max-elephant-jujutsu-kaisen-gif-17848841313289141645",
-    "https://tenor.com/view/hazenoki-iori-iori-hazenoki-reggie-reggie-star-gif-15470925985641586022"
+    "https://tenor.com/g1PMKnVanu.gif",
+    "https://tenor.com/gCWUsSmNiKZ.gif",
+    "https://tenor.com/bG6Lk.gif",
+    "https://tenor.com/1nKPZe19HC.gif",
+    "https://tenor.com/hePTjbsH6wO.gif",
+    "https://tenor.com/s5LleKfiFIt.gif",
+    "https://tenor.com/qiJpIenIjHB.gif",
+    "https://tenor.com/fNMtMSKEIch.gif",
+    "https://tenor.com/view/goku-black-goku-black-shush-zamasu-gif-5057528923283903671"
 ]
 
 UNTIMEOUT_GIFS = [
@@ -70,25 +47,18 @@ UNTIMEOUT_GIFS = [
     "https://klipy.com/gifs/doctor-manhattan-watchmen",
     "https://tenor.com/view/revive-gif-23866294",
     "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664"
-    "https://tenor.com/view/todo-jjk-jujutsu-kaisen-shibuya-arc-mahito-gif-11933159284027340768",
-    "https://tenor.com/view/the-boys-homelander-season-5-tung-tung-tung-sahur-tung-tung-sahur-gif-7005128074439649595",
-    "https://tenor.com/view/he-has-me-gif-13654467562542512739",
-    "https://tenor.com/view/ryomen-sukuna-sukuna-ryomen-sukuna-ryomen-megumi-fushiguro-gif-6088274754816185868",
-    "https://tenor.com/view/jjk-jujutsu-kaisen-yuta-yuta-okkotsu-okkotsu-gif-5353918859104233890",
-    "https://tenor.com/view/higuruma-jjk-jujutsu-kaisen-jujutsukaisen-retrial-gif-5462736760420847458",
-    "https://tenor.com/view/overwatch-gif-9248765",
-    "https://tenor.com/view/jjk-jujutsu-kaisen-season-2-nobara-kugisaki-itadori-yuji-gif-2211818749172123653",
-    "https://tenor.com/view/lol-gif-23256631",
-    "https://tenor.com/view/ohmmm-cartman-gif-10082733958201247483",
-    "https://tenor.com/view/thumbs-up-gif-12921332806977950807",
-    "https://tenor.com/view/ryu-ryu-ishigori-yuta-yuta-okkotsu-jujutsu-kaisen-gif-8459438190665096786",
-    "https://tenor.com/view/cat-cats-rigby-rigby-the-cat-rigby-cat-gif-12777307700590236451",
-    "https://tenor.com/view/israel-israel-superhero-am-yisrael-chai-israeli-flag-gif-16069792012856888850",
-    "https://tenor.com/view/american-gif-27543431",
-    "https://tenor.com/view/peter-griffin-gif-12194285640126683264",
-    "https://tenor.com/view/yuta-okkotsu-vs-ryu-ishigori-apply-gif-48656283840648220",
-    "https://tenor.com/view/big-brain-cell-gif-11009529955506497046",
-    "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664"
+    "https://tenor.com/onF9Vf3cHMO.gif",
+    "https://tenor.com/ivDIWgkDkDv.gif",
+    "https://tenor.com/qqPLKMoUvl1.gif",
+    "https://tenor.com/hpUwFpPR9uO.gif",
+    "https://tenor.com/gxFat3FEapG.gif",
+    "https://tenor.com/gFHyueznjs6.gif",
+    "https://tenor.com/MYbN.gif",
+    "https://tenor.com/cNyjFADRNTl.gif",
+    "https://tenor.com/bJKg7.gif",
+    "https://tenor.com/maZbVIbE3Pr.gif",
+    "https://tenor.com/pyF0khnkBOB.gif",
+    "https://tenor.com/view/ryu-ryu-ishigori-yuta-yuta-okkotsu-jujutsu-kaisen-gif-8459438190665096786"
 ]
 
 TIMEOUT_SECONDS = 90
@@ -247,7 +217,28 @@ DEADLY_SENTENCES_CHANNEL = "deadly-sentences"
 MODLOG_CHANNEL = "modlog"
 BANNED_ROLE_NAME = "Banned"
 
-# { member_id: { "role_ids": [int], "message_id": int, "channel_id": int, "task": Task } }
+DEGLOVINGS_FILE = "active_deglovings.json"
+
+def save_deglovings():
+    data = {
+        str(member_id): {
+            "role_ids": entry["role_ids"],
+            "message_id": entry["message_id"],
+            "channel_id": entry["channel_id"],
+            "reglove_at": entry["reglove_at"],
+        }
+        for member_id, entry in active_deglovings.items()
+    }
+    with open(DEGLOVINGS_FILE, "w") as f:
+        json.dump(data, f)
+
+def load_deglovings():
+    if not os.path.exists(DEGLOVINGS_FILE):
+        return {}
+    with open(DEGLOVINGS_FILE, "r") as f:
+        return json.load(f)
+
+# { member_id: { "role_ids": [int], "message_id": int, "channel_id": int, "task": Task, "reglove_at": str } }
 active_deglovings = {}
 
 # Fully independent cooldown timers — kill and save never affect each other.
@@ -275,6 +266,45 @@ async def log_error(guild, label: str, error: Exception):
 async def on_ready():
     print(f"Logged in as {bot.user}")
 
+    saved = load_deglovings()
+    for member_id_str, entry in saved.items():
+        member_id = int(member_id_str)
+        reglove_at = datetime.fromisoformat(entry["reglove_at"])
+        now = datetime.utcnow()
+        remaining = (reglove_at - now).total_seconds()
+
+        active_deglovings[member_id] = {
+            "role_ids": entry["role_ids"],
+            "message_id": entry["message_id"],
+            "channel_id": entry["channel_id"],
+            "reglove_at": entry["reglove_at"],
+            "task": None,
+        }
+
+        async def scheduled_reglove(mid=member_id, secs=max(remaining, 0)):
+            try:
+                await asyncio.sleep(secs)
+                guild = bot.guilds[0] if bot.guilds else None
+                if guild and mid in active_deglovings:
+                    member = guild.get_member(mid)
+                    if member:
+                        channel_id = active_deglovings[mid].get("channel_id")
+                        announce_channel = guild.get_channel(channel_id) if channel_id else None
+                        await reglove_member(guild, member, announce_channel)
+                    else:
+                        active_deglovings.pop(mid, None)
+                        save_deglovings()
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                guild = bot.guilds[0] if bot.guilds else None
+                if guild:
+                    await log_error(guild, f"on_ready scheduled_reglove for {mid}", e)
+
+        task = asyncio.create_task(scheduled_reglove())
+        active_deglovings[member_id]["task"] = task
+        print(f"[on_ready] Rebuilt deglove timer for member {member_id}, {max(remaining, 0):.0f}s remaining")
+
 
 def parse_duration(duration_str):
     match = re.fullmatch(r"(\d+)(s|m|h|d)", duration_str.strip().lower())
@@ -289,6 +319,7 @@ async def reglove_member(guild, member, announce_channel):
     entry = active_deglovings.pop(member.id, None)
     if not entry:
         return
+    save_deglovings()
 
     task = entry.get("task")
     if task and not task.done():
@@ -461,7 +492,9 @@ async def deglove(ctx, duration: str = None, *, reason: str = None):
         "message_id": message_id,
         "channel_id": channel_id,
         "task": None,
+        "reglove_at": (datetime.utcnow() + timedelta(seconds=seconds)).isoformat(),
     }
+    save_deglovings()
 
     async def scheduled_reglove():
         try:
@@ -491,323 +524,4 @@ async def reglove(ctx):
 
     try:
         replied_message = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-    except Exception as e:
-        await ctx.send("Couldn't fetch the replied message.")
-        await log_error(ctx.guild, "reglove: fetch replied message", e)
-        return
-
-    member = ctx.guild.get_member(replied_message.author.id)
-
-    if not member:
-        await ctx.send("Couldn't find that member in the server.")
-        return
-
-    if member.id not in active_deglovings:
-        await ctx.send(f"{member.mention} isn't currently degloved.")
-        return
-
-    try:
-        await reglove_member(ctx.guild, member, ctx.channel)
-    except Exception as e:
-        await log_error(ctx.guild, f"reglove command for {member}", e)
-
-
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
-
-    author_roles = [role.name for role in message.author.roles]
-
-    # =========================
-    # BOT MENTION → SHOW COOLDOWN STATUS
-    # =========================
-    if bot.user in message.mentions:
-        valid_roles = [r for r in author_roles if r in ROLE_COOLDOWNS]
-
-        if not valid_roles:
-            await message.channel.send(
-                f"{message.author.mention}, you don't have any cooldown role."
-            )
-            return
-
-        best_role = min(valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
-        base_cd = ROLE_COOLDOWNS[best_role]
-        vow = get_active_vow(author_roles)
-        vow_str = format_vow_label(vow)
-        now = datetime.utcnow()
-        user_id = message.author.id
-
-        if vow == "CONFLICT":
-            await message.channel.send(
-                f"{message.author.mention}, ⚠️ you have multiple Binding Vow roles — "
-                f"vows are being ignored until this is resolved."
-            )
-            return
-
-        if base_cd == 0:
-            await message.channel.send(
-                f"{message.author.mention}, ({best_role}{vow_str}) you have no cooldown 😈"
-            )
-            return
-
-        # --- Stack Vow: show charge status ---
-        if vow == "Stack Vow":
-            sv_cd = base_cd * STACK_VOW_MULTIPLIER
-
-            def charge_status(action: str) -> str:
-                available = stack_vow_available_charges(user_id, action, sv_cd, now)
-                next_regen = stack_vow_next_regen(user_id, action, sv_cd, now)
-                charge_pips = "🟢" * available + "🔴" * (STACK_VOW_MAX_CHARGES - available)
-                if next_regen:
-                    return f"{charge_pips} (next regen in **{str(next_regen).split('.')[0]}**)"
-                return charge_pips
-
-            await message.channel.send(
-                f"{message.author.mention}, ({best_role} [Stack Vow]) CD: {sv_cd:.4g}h per charge\n"
-                f"☠️ Kill charges: {charge_status('kill')}\n"
-                f"💚 Save charges: {charge_status('save')}"
-            )
-            return
-
-        # --- Standard vows: show independent kill/save cooldowns ---
-        kill_cd = apply_vow(base_cd, "kill", vow)
-        save_cd = apply_vow(base_cd, "save", vow)
-        last_kill = last_kill_used.get(user_id)
-        last_save = last_save_used.get(user_id)
-
-        def format_cd(hours: float, last: datetime | None) -> str:
-            if hours == -1.0:
-                return "blocked 🚫"
-            if hours <= 0:
-                return "ready instantly ✅"
-            td = timedelta(hours=hours)
-            if not last or now - last >= td:
-                return "ready ✅"
-            remaining = td - (now - last)
-            return f"**{str(remaining).split('.')[0]}** remaining"
-
-        if kill_cd == save_cd and last_kill == last_save:
-            # Both timers are identical — show a single line for cleanliness
-            await message.channel.send(
-                f"{message.author.mention}, ({best_role}{vow_str}) cooldown: {format_cd(kill_cd, last_kill)}"
-            )
-        else:
-            await message.channel.send(
-                f"{message.author.mention}, ({best_role}{vow_str})\n"
-                f"☠️ Kill CD: {format_cd(kill_cd, last_kill)}\n"
-                f"💚 Save CD: {format_cd(save_cd, last_save)}"
-            )
-        return
-
-    # MUST BE A REPLY TO TRIGGER GIF ACTIONS
-    if not message.reference:
-        await bot.process_commands(message)
-        return
-
-    content = message.content
-    is_kill_gif = any(gif in content for gif in TARGET_GIFS)
-    is_save_gif = any(gif in content for gif in UNTIMEOUT_GIFS)
-
-    if not (is_kill_gif or is_save_gif):
-        await bot.process_commands(message)
-        return
-
-    try:
-        replied_message = await message.channel.fetch_message(message.reference.message_id)
-    except Exception as e:
-        await log_error(message.guild, "on_message: fetch replied message", e)
-        await bot.process_commands(message)
-        return
-
-    member_to_timeout = message.guild.get_member(replied_message.author.id)
-    if not member_to_timeout:
-        return
-
-    valid_roles = [r for r in author_roles if r in ROLE_COOLDOWNS]
-    if not valid_roles:
-        await message.channel.send(
-            f"{message.author.mention}, you don't have permission to use this GIF!"
-        )
-        return
-
-    best_role = min(valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
-    base_cd = ROLE_COOLDOWNS[best_role]
-    vow = get_active_vow(author_roles)
-    now = datetime.utcnow()
-    user_id = message.author.id
-    action = "kill" if is_kill_gif else "save"
-
-    if vow == "CONFLICT":
-        await message.channel.send(
-            f"{message.author.mention}, ⚠️ you have multiple Binding Vow roles — "
-            f"vows are being ignored until this is resolved."
-        )
-        vow = None
-
-    # =========================
-    # STACK VOW: charge-based cooldown check
-    # =========================
-    if vow == "Stack Vow":
-        sv_cd = base_cd * STACK_VOW_MULTIPLIER
-        available = stack_vow_available_charges(user_id, action, sv_cd, now)
-
-        if available == 0:
-            next_regen = stack_vow_next_regen(user_id, action, sv_cd, now)
-            await message.channel.send(
-                f"{message.author.mention}, [Stack Vow] no {action} charges left — "
-                f"next charge in **{str(next_regen).split('.')[0]}**"
-            )
-            return
-
-        # Charge available — consume it and proceed to the action
-        stack_vow_consume_charge(user_id, action, now)
-        remaining_after = available - 1
-        vow_str = f" [Stack Vow | {remaining_after}/{STACK_VOW_MAX_CHARGES} {action} charges left]"
-
-    # =========================
-    # STANDARD VOW: multiplier-based cooldown check
-    # =========================
-    else:
-        effective_cd = apply_vow(base_cd, action, vow)
-        vow_str = format_vow_label(vow)
-
-        # Vow blocks this action entirely
-        if effective_cd == -1.0:
-            await message.channel.send(
-                f"{message.author.mention}, your {vow} forbids you from killing. 🩹"
-            )
-            return
-
-        # Check and enforce the independent timer for this specific action
-        last = last_kill_used.get(user_id) if action == "kill" else last_save_used.get(user_id)
-
-        if effective_cd > 0 and last:
-            if now - last < timedelta(hours=effective_cd):
-                remaining = timedelta(hours=effective_cd) - (now - last)
-                await message.channel.send(
-                    f"{message.author.mention}, ({best_role}{vow_str}) cooldown remaining: "
-                    f"{str(remaining).split('.')[0]}"
-                )
-                return
-
-        # Stamp only the timer for this action — the other is unaffected
-        if action == "kill":
-            last_kill_used[user_id] = now
-        else:
-            last_save_used[user_id] = now
-
-    # =========================
-    # SAVE GIF → UNTIMEOUT
-    # =========================
-    if is_save_gif:
-        if not member_to_timeout.timed_out_until:
-            await message.channel.send("They're not even timed out bro 💀")
-            return
-
-        remaining = member_to_timeout.timed_out_until - discord.utils.utcnow()
-
-        if remaining.total_seconds() <= 90:
-            try:
-                await member_to_timeout.timeout(None)
-                await message.channel.send(
-                    f"{member_to_timeout.mention} has been freed early by "
-                    f"{message.author.mention}{vow_str}"
-                )
-            except Exception as e:
-                await message.channel.send("Failed to remove timeout.")
-                await log_error(
-                    message.guild,
-                    f"untimeout: remove timeout from {member_to_timeout}",
-                    e
-                )
-        else:
-            await message.channel.send(
-                f"Too long left on timeout ({int(remaining.total_seconds())}s). Can't save them."
-            )
-
-        await bot.process_commands(message)
-        return
-
-    # =========================
-    # KILL GIF → TIMEOUT
-    # =========================
-    if is_kill_gif:
-        timeout_duration = 180 if vow == "Destruction Vow" else TIMEOUT_SECONDS
-
-        # Hakari Vow: gamble on every kill — 36% hit, 64% self-mute
-        if vow == "Hakari Vow":
-            if random.random() < 0.36:
-                # WIN — mute the target for 4m11s (251 seconds)
-                try:
-                    await member_to_timeout.timeout(
-                        discord.utils.utcnow() + timedelta(seconds=251)
-                    )
-                    await message.channel.send(
-                        f"🎰 **JACKPOT!** {member_to_timeout.mention} has been muted for 4m11s "
-                        f"by {message.author.mention} [Hakari Vow] lmao"
-                    )
-                except Exception as e:
-                    await message.channel.send(f"Failed to timeout {member_to_timeout.mention}.")
-                    await log_error(message.guild, f"hakari win: timeout {member_to_timeout}", e)
-            else:
-                # LOSE — mute yourself for 90 seconds
-                author_member = message.guild.get_member(message.author.id)
-                if author_member:
-                    try:
-                        await author_member.timeout(
-                            discord.utils.utcnow() + timedelta(seconds=90)
-                        )
-                        await message.channel.send(
-                            f"💀 {message.author.mention} [Hakari Vow] lost the gamble and muted themselves for 90s lmaooo"
-                        )
-                    except Exception as e:
-                        await message.channel.send("Failed to apply self-mute.")
-                        await log_error(message.guild, f"hakari loss: timeout {author_member}", e)
-                else:
-                    await message.channel.send("Couldn't find you in the server to apply the self-mute??")
-        else:
-            try:
-                await member_to_timeout.timeout(
-                    discord.utils.utcnow() + timedelta(seconds=timeout_duration)
-                )
-                await message.channel.send(
-                    f"{member_to_timeout.mention} has been timed out for {timeout_duration}s "
-                    f"by {message.author.mention}{vow_str} lmao"
-                )
-            except Exception as e:
-                await message.channel.send(f"Failed to timeout {member_to_timeout.mention}.")
-                await log_error(
-                    message.guild,
-                    f"timeout: apply timeout to {member_to_timeout}",
-                    e
-                )
-
-    await bot.process_commands(message)
-
-
-@bot.event
-async def on_reaction_add(reaction, user):
-    if user.bot:
-        return
-
-    emoji_map = {
-        "🫃": "MPREG",
-        "🤰": "WPREG",
-        "🧑‍🍼": "PREG"
-    }
-
-    if str(reaction.emoji) in emoji_map:
-        await reaction.message.channel.send(
-            f"{user.mention} JUST USED {emoji_map[str(reaction.emoji)]} EMOJI GO KILL THEM"
-        )
-
-
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandNotFound):
-        return
-    await log_error(ctx.guild, f"command error in #{ctx.channel.name} by {ctx.author}", error)
-
-
-bot.run(os.getenv("TOKEN"))
+    except Exceptio

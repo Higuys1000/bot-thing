@@ -113,7 +113,7 @@ CLASH_TICKETS = {
     "Chud": 3,
     "Otis BFF ❤️": 3,
     "Shit ass mod": 3,
-    "Good Moderator Morning!": 0
+    "Good Moderator Morning!": 999
 }
 
 # =========================
@@ -162,7 +162,7 @@ BINDING_VOWS = {
     },
 }
 
-STACK_VOW_MULTIPLIER = 3.0
+STACK_VOW_MULTIPLIER = 2.0
 STACK_VOW_MAX_CHARGES = 3
 
 # Charge state for Stack Vow users.
@@ -741,6 +741,8 @@ async def on_message(message):
             else:
                 loser = attacker
                 winner = defender
+
+            await asyncio.sleep(3)
 
             try:
                 await loser.timeout(

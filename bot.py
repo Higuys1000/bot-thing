@@ -6,6 +6,7 @@ import os
 import asyncio
 import re
 import traceback
+import json
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -92,6 +93,9 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/yourrage-chair-bounce-yourrage-bounce-yourrage-gif-6221615739239256499"
 ]
 
+CLASH_GIF = "https://tenor.com/view/gojo-satoru-sukuna-gif-14001663626498053725"
+CLASH_WINDOW_SECONDS = 5
+
 TIMEOUT_SECONDS = 90
 
 ROLE_COOLDOWNS = {
@@ -100,6 +104,15 @@ ROLE_COOLDOWNS = {
     "Chud": 4,
     "Otis BFF ❤️": 4,
     "Shit ass mod": 0,
+    "Good Moderator Morning!": 0
+}
+
+CLASH_TICKETS = {
+    "Bum": 1,
+    "Rat": 2,
+    "Chud": 3,
+    "Otis BFF ❤️": 3,
+    "Shit ass mod": 3,
     "Good Moderator Morning!": 0
 }
 
@@ -248,12 +261,56 @@ DEADLY_SENTENCES_CHANNEL = "deadly-sentences"
 MODLOG_CHANNEL = "modlog"
 BANNED_ROLE_NAME = "Banned"
 
-# { member_id: { "role_ids": [int], "message_id": int, "channel_id": int, "task": Task } }
+DEGLOVINGS_FILE = "active_deglovings.json"
+
+def save_deglovings():
+    data = {
+        str(member_id): {
+            "role_ids": entry["role_ids"],
+            "message_id": entry["message_id"],
+            "channel_id": entry["channel_id"],
+            "reglove_at": entry["reglove_at"],
+        }
+        for member_id, entry in active_deglovings.items()
+    }
+    with open(DEGLOVINGS_FILE, "w") as f:
+        json.dump(data, f)
+
+def load_deglovings():
+    if not os.path.exists(DEGLOVINGS_FILE):
+        return {}
+    with open(DEGLOVINGS_FILE, "r") as f:
+        return json.load(f)
+
+# { member_id: { "role_ids": [int], "message_id": int, "channel_id": int, "task": Task, "reglove_at": str } }
 active_deglovings = {}
 
 # Fully independent cooldown timers — kill and save never affect each other.
 last_kill_used: dict[int, datetime] = {}
 last_save_used: dict[int, datetime] = {}
+
+# Pending clashes: { attacker_message_id: { "attacker": Member, "defender": Member, "channel": TextChannel, "timeout_duration": int, "attacker_vow_str": str, "task": Task } }
+pending_clashes: dict[int, dict] = {}
+
+
+# =========================
+# CLASH HELPERS
+# =========================
+
+def get_clash_tickets(member_roles: list[str]) -> int:
+    """Returns the clash ticket count for a member based on their best role."""
+    best = 0
+    for role_name in member_roles:
+        tickets = CLASH_TICKETS.get(role_name, 0)
+        if tickets > best:
+            best = tickets
+    return best if best > 0 else 1  # Default to 1 if no clash role found
+
+
+def resolve_clash(attacker_tickets: int, defender_tickets: int) -> bool:
+    """Returns True if attacker wins, False if defender wins."""
+    total = attacker_tickets + defender_tickets
+    return random.randint(1, total) <= attacker_tickets
 
 
 # =========================
@@ -276,6 +333,45 @@ async def log_error(guild, label: str, error: Exception):
 async def on_ready():
     print(f"Logged in as {bot.user}")
 
+    saved = load_deglovings()
+    for member_id_str, entry in saved.items():
+        member_id = int(member_id_str)
+        reglove_at = datetime.fromisoformat(entry["reglove_at"])
+        now = datetime.utcnow()
+        remaining = (reglove_at - now).total_seconds()
+
+        active_deglovings[member_id] = {
+            "role_ids": entry["role_ids"],
+            "message_id": entry["message_id"],
+            "channel_id": entry["channel_id"],
+            "reglove_at": entry["reglove_at"],
+            "task": None,
+        }
+
+        async def scheduled_reglove(mid=member_id, secs=max(remaining, 0)):
+            try:
+                await asyncio.sleep(secs)
+                guild = bot.guilds[0] if bot.guilds else None
+                if guild and mid in active_deglovings:
+                    member = guild.get_member(mid)
+                    if member:
+                        channel_id = active_deglovings[mid].get("channel_id")
+                        announce_channel = guild.get_channel(channel_id) if channel_id else None
+                        await reglove_member(guild, member, announce_channel)
+                    else:
+                        active_deglovings.pop(mid, None)
+                        save_deglovings()
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                guild = bot.guilds[0] if bot.guilds else None
+                if guild:
+                    await log_error(guild, f"on_ready scheduled_reglove for {mid}", e)
+
+        task = asyncio.create_task(scheduled_reglove())
+        active_deglovings[member_id]["task"] = task
+        print(f"[on_ready] Rebuilt deglove timer for member {member_id}, {max(remaining, 0):.0f}s remaining")
+
 
 def parse_duration(duration_str):
     match = re.fullmatch(r"(\d+)(s|m|h|d)", duration_str.strip().lower())
@@ -290,6 +386,7 @@ async def reglove_member(guild, member, announce_channel):
     entry = active_deglovings.pop(member.id, None)
     if not entry:
         return
+    save_deglovings()
 
     task = entry.get("task")
     if task and not task.done():
@@ -462,7 +559,9 @@ async def deglove(ctx, duration: str = None, *, reason: str = None):
         "message_id": message_id,
         "channel_id": channel_id,
         "task": None,
+        "reglove_at": (datetime.utcnow() + timedelta(seconds=seconds)).isoformat(),
     }
+    save_deglovings()
 
     async def scheduled_reglove():
         try:
@@ -610,6 +709,52 @@ async def on_message(message):
     is_kill_gif = any(gif in content for gif in TARGET_GIFS)
     is_save_gif = any(gif in content for gif in UNTIMEOUT_GIFS)
 
+    # =========================
+    # CLASH CHECK — defender replying to a pending clash
+    # =========================
+    if is_kill_gif and message.reference.message_id in pending_clashes:
+        clash_data = pending_clashes.pop(message.reference.message_id, None)
+        if clash_data and message.author.id == clash_data["defender"].id:
+            # Cancel the pending timeout task
+            clash_data["task"].cancel()
+
+            attacker = clash_data["attacker"]
+            defender = clash_data["defender"]
+            timeout_duration = clash_data["timeout_duration"]
+            attacker_vow_str = clash_data["attacker_vow_str"]
+
+            attacker_roles = [r.name for r in attacker.roles]
+            defender_roles = [r.name for r in defender.roles]
+            attacker_tickets = get_clash_tickets(attacker_roles)
+            defender_tickets = get_clash_tickets(defender_roles)
+
+            # Stamp cooldown for defender
+            now = datetime.utcnow()
+            last_kill_used[defender.id] = now
+
+            await message.channel.send(CLASH_GIF)
+
+            attacker_wins = resolve_clash(attacker_tickets, defender_tickets)
+            if attacker_wins:
+                loser = defender
+                winner = attacker
+            else:
+                loser = attacker
+                winner = defender
+
+            try:
+                await loser.timeout(
+                    discord.utils.utcnow() + timedelta(seconds=timeout_duration)
+                )
+                await message.channel.send(
+                    f"{winner.mention} WON\n{loser.mention} get timed out"
+                )
+            except Exception as e:
+                await log_error(message.guild, f"clash: timeout {loser}", e)
+
+            await bot.process_commands(message)
+            return
+
     if not (is_kill_gif or is_save_gif):
         await bot.process_commands(message)
         return
@@ -731,7 +876,7 @@ async def on_message(message):
         return
 
     # =========================
-    # KILL GIF → TIMEOUT
+    # KILL GIF → TIMEOUT (with clash window)
     # =========================
     if is_kill_gif:
         timeout_duration = 180 if vow == "Destruction Vow" else TIMEOUT_SECONDS
@@ -739,7 +884,6 @@ async def on_message(message):
         # Hakari Vow: gamble on every kill — 36% hit, 64% self-mute
         if vow == "Hakari Vow":
             if random.random() < 0.36:
-                # WIN — mute the target for 4m11s (251 seconds)
                 try:
                     await member_to_timeout.timeout(
                         discord.utils.utcnow() + timedelta(seconds=251)
@@ -752,7 +896,6 @@ async def on_message(message):
                     await message.channel.send(f"Failed to timeout {member_to_timeout.mention}.")
                     await log_error(message.guild, f"hakari win: timeout {member_to_timeout}", e)
             else:
-                # LOSE — mute yourself for 90 seconds
                 author_member = message.guild.get_member(message.author.id)
                 if author_member:
                     try:
@@ -768,21 +911,42 @@ async def on_message(message):
                 else:
                     await message.channel.send("Couldn't find you in the server to apply the self-mute??")
         else:
-            try:
-                await member_to_timeout.timeout(
-                    discord.utils.utcnow() + timedelta(seconds=timeout_duration)
-                )
-                await message.channel.send(
-                    f"{member_to_timeout.mention} has been timed out for {timeout_duration}s "
-                    f"by {message.author.mention}{vow_str} lmao"
-                )
-            except Exception as e:
-                await message.channel.send(f"Failed to timeout {member_to_timeout.mention}.")
-                await log_error(
-                    message.guild,
-                    f"timeout: apply timeout to {member_to_timeout}",
-                    e
-                )
+            # Register pending clash and wait CLASH_WINDOW_SECONDS before timing out
+            attacker = message.author
+            defender = member_to_timeout
+            kill_message_id = message.id
+
+            async def clash_or_timeout():
+                try:
+                    await asyncio.sleep(CLASH_WINDOW_SECONDS)
+                    # If still pending (no clash happened), apply timeout normally
+                    if kill_message_id in pending_clashes:
+                        pending_clashes.pop(kill_message_id, None)
+                        try:
+                            await defender.timeout(
+                                discord.utils.utcnow() + timedelta(seconds=timeout_duration)
+                            )
+                            await message.channel.send(
+                                f"{defender.mention} has been timed out for {timeout_duration}s "
+                                f"by {attacker.mention}{vow_str} lmao"
+                            )
+                        except Exception as e:
+                            await message.channel.send(f"Failed to timeout {defender.mention}.")
+                            await log_error(message.guild, f"timeout: apply timeout to {defender}", e)
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    await log_error(message.guild, f"clash_or_timeout for {defender}", e)
+
+            task = asyncio.create_task(clash_or_timeout())
+            pending_clashes[kill_message_id] = {
+                "attacker": attacker,
+                "defender": defender,
+                "channel": message.channel,
+                "timeout_duration": timeout_duration,
+                "attacker_vow_str": vow_str,
+                "task": task,
+            }
 
     await bot.process_commands(message)
 

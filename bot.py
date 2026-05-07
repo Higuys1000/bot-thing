@@ -395,11 +395,19 @@ async def on_ready():
     global server_settings
     server_settings = load_server_settings()
     print(f"Logged in as {bot.user}")
+    print("Slash commands are registered globally. Use !sync to push any changes to Discord.")
+
+
+@bot.command(name="sync")
+@commands.is_owner()
+async def sync_commands(ctx):
+    """Owner-only: push slash command changes to Discord globally."""
+    await ctx.send("Syncing slash commands globally... this can take up to an hour to show everywhere.")
     try:
         synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} slash command(s)")
+        await ctx.send(f"\u2705 Synced {len(synced)} slash command(s) globally.")
     except Exception as e:
-        print(f"Failed to sync slash commands: {e}")
+        await ctx.send(f"\u274c Sync failed: {e}")
 
 
 # =========================
@@ -630,14 +638,15 @@ async def on_message(message):
     default_cd = get_default_cooldown(message.guild.id)
     default_role_id = get_default_role(message.guild.id)
 
-    # If a default role is set, user must have either a named role or the default role
+    # If a default role is set, only that role (or named cooldown roles) can use GIFs.
+    # If no default role is set, everyone is allowed.
     has_named_role = bool(valid_roles)
-    has_default_role = (
-        default_role_id is None or
+    has_required_role = (
+        default_role_id is not None and
         any(r.id == default_role_id for r in message.author.roles)
     )
 
-    if not has_named_role and not has_default_role:
+    if default_role_id is not None and not has_named_role and not has_required_role:
         required_role = message.guild.get_role(default_role_id)
         role_name = required_role.name if required_role else "the required role"
         await message.channel.send(

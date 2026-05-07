@@ -108,11 +108,11 @@ ROLE_COOLDOWNS = {
 }
 
 CLASH_TICKETS = {
-    "Bum": 1,
-    "Rat": 2,
-    "Chud": 3,
-    "Otis BFF ❤️": 3,
-    "Shit ass mod": 3,
+    "Bum": 4,
+    "Rat": 7,
+    "Chud": 10,
+    "Otis BFF ❤️": 10,
+    "Shit ass mod": 10,
     "Good Moderator Morning!": 999
 }
 

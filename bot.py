@@ -1,5 +1,7 @@
 import random
 import discord
+import aiohttp
+from aiohttp import web
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime, timedelta
@@ -123,6 +125,47 @@ CLASH_TICKETS = {
 SERVER_SETTINGS_FILE = "server_settings.json"
 DEFAULT_COOLDOWN_HOURS = 12.0
 server_settings: dict[int, dict] = {}
+
+# =========================
+# VOTE SYSTEM
+#
+# Votes from discordbotlist.com last 12 hours.
+# During that window the voter gets 25% off their effective cooldown.
+# The webhook server listens on VOTE_WEBHOOK_PORT and expects the
+# Authorization header to match VOTE_WEBHOOK_AUTH (set in your env).
+# =========================
+
+VOTE_WEBHOOK_PORT = int(os.getenv("PORT", os.getenv("VOTE_WEBHOOK_PORT", "5000")))
+VOTE_WEBHOOK_AUTH = os.getenv("VOTE_WEBHOOK_AUTH", "")  # set this in your environment
+VOTE_DURATION_HOURS = 12.0
+VOTE_DISCOUNT = 0.75  # multiply cooldown by this → 25% off
+
+# { user_id (int): datetime of last vote }
+vote_timestamps: dict[int, datetime] = {}
+
+
+def has_active_vote(user_id: int) -> bool:
+    ts = vote_timestamps.get(user_id)
+    if not ts:
+        return False
+    return datetime.utcnow() - ts < timedelta(hours=VOTE_DURATION_HOURS)
+
+
+def vote_expires_in(user_id: int) -> timedelta | None:
+    ts = vote_timestamps.get(user_id)
+    if not ts:
+        return None
+    remaining = timedelta(hours=VOTE_DURATION_HOURS) - (datetime.utcnow() - ts)
+    return remaining if remaining.total_seconds() > 0 else None
+
+
+def apply_vote_discount(hours: float, user_id: int) -> float:
+    """Applies 25% vote discount to a cooldown value if the user has an active vote."""
+    if hours <= 0 or hours == -1.0:
+        return hours
+    if has_active_vote(user_id):
+        return hours * VOTE_DISCOUNT
+    return hours
 
 
 def load_server_settings():
@@ -303,9 +346,19 @@ def build_help_embed(guild_id: int) -> discord.Embed:
     embed.add_field(name="Binding Vows", value=vow_lines, inline=False)
 
     embed.add_field(
+        name="\U0001f4e5 Vote for a Cooldown Discount",
+        value=(
+            "Vote for the bot to get **25% off your cooldowns** for 12 hours!\n"
+            "[Click here to vote](https://discordbotlist.com/bots/funnything/upvote)"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
         name="Commands",
         value=(
             "`/help` or `!help` \u2014 show this message\n"
+            "`/vote` or `!vote` \u2014 get the vote link for a 25% cooldown discount\n"
             "`/cooldown` or `@bot` \u2014 check your current cooldown status\n"
             "`/cooldowns [hours]` or `!cooldowns [hours]` \u2014 view or set the default cooldown *(mods only)*\n"
             "`/setdefaultrole [@role]` or `!setdefaultrole [@role]` \u2014 set the role needed to use GIFs *(mods only)*\n"
@@ -361,10 +414,12 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
             f"\U0001f49a Save charges: {charge_status('save')}"
         )
 
-    kill_cd = apply_vow(base_cd, "kill", vow)
-    save_cd = apply_vow(base_cd, "save", vow)
+    kill_cd = apply_vote_discount(apply_vow(base_cd, "kill", vow), user_id)
+    save_cd = apply_vote_discount(apply_vow(base_cd, "save", vow), user_id)
     last_kill = last_kill_used.get(user_id)
     last_save = last_save_used.get(user_id)
+    voted = has_active_vote(user_id)
+    vote_label = " \U0001f4e5 25% off" if voted else ""
 
     def format_cd(hours: float, last: datetime | None) -> str:
         if hours == -1.0:
@@ -378,9 +433,9 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
         return f"**{str(remaining).split('.')[0]}** remaining"
 
     if kill_cd == save_cd and last_kill == last_save:
-        return f"{member.mention}, ({role_label}{vow_str}) cooldown: {format_cd(kill_cd, last_kill)}"
+        return f"{member.mention}, ({role_label}{vow_str}{vote_label}) cooldown: {format_cd(kill_cd, last_kill)}"
     return (
-        f"{member.mention}, ({role_label}{vow_str})\n"
+        f"{member.mention}, ({role_label}{vow_str}{vote_label})\n"
         f"\u2620\ufe0f Kill CD: {format_cd(kill_cd, last_kill)}\n"
         f"\U0001f49a Save CD: {format_cd(save_cd, last_save)}"
     )
@@ -396,6 +451,7 @@ async def on_ready():
     server_settings = load_server_settings()
     print(f"Logged in as {bot.user}")
     print("Slash commands are registered globally. Use !sync to push any changes to Discord.")
+    await start_webhook_server()
 
 
 @bot.command(name="sync")
@@ -563,6 +619,110 @@ async def slash_cleardefaultrole(interaction: discord.Interaction):
 
 
 # =========================
+# VOTE COMMANDS  (!vote, /vote)
+# =========================
+
+VOTE_EMBED_COLOR = discord.Color.gold()
+
+def build_vote_embed(user_id: int) -> discord.Embed:
+    embed = discord.Embed(
+        title="📥 Vote for a Cooldown Discount!",
+        description=(
+            "Vote for the bot on Discord Bot List and get **25% off your cooldowns** for 12 hours!\n\n"
+            "[\U0001f517 Click here to vote](https://discordbotlist.com/bots/funnything/upvote)"
+        ),
+        color=VOTE_EMBED_COLOR,
+        url="https://discordbotlist.com/bots/funnything/upvote"
+    )
+    if has_active_vote(user_id):
+        expires = vote_expires_in(user_id)
+        expires_str = str(expires).split('.')[0] if expires else "soon"
+        embed.add_field(
+            name="\u2705 Your vote is active!",
+            value=f"You have 25% off your cooldowns. Expires in **{expires_str}**.",
+            inline=False
+        )
+    else:
+        embed.add_field(
+            name="No active vote",
+            value="Vote now to unlock your discount!",
+            inline=False
+        )
+    return embed
+
+
+@bot.command(name="vote")
+async def prefix_vote(ctx):
+    await ctx.send(embed=build_vote_embed(ctx.author.id))
+
+
+@bot.tree.command(name="vote", description="Get the vote link for 25% off your cooldowns for 12 hours")
+async def slash_vote(interaction: discord.Interaction):
+    await interaction.response.send_message(embed=build_vote_embed(interaction.user.id))
+
+
+# =========================
+# VOTE WEBHOOK SERVER
+#
+# discordbotlist.com POSTs to your webhook URL when someone votes.
+# Set VOTE_WEBHOOK_PORT (default 5000) and VOTE_WEBHOOK_AUTH in your environment.
+# In the DBL dashboard, set your webhook URL to: http://your-server-ip:5000/dbl-webhook
+# and the authorization token to whatever you set VOTE_WEBHOOK_AUTH to.
+# =========================
+
+async def handle_dbl_webhook(request: web.Request) -> web.Response:
+    # Verify authorization
+    auth = request.headers.get("Authorization", "")
+    if VOTE_WEBHOOK_AUTH and auth != VOTE_WEBHOOK_AUTH:
+        return web.Response(status=401, text="Unauthorized")
+
+    try:
+        data = await request.json()
+    except Exception:
+        return web.Response(status=400, text="Bad request")
+
+    user_id_str = data.get("id") or data.get("user")
+    if not user_id_str:
+        return web.Response(status=400, text="No user ID in payload")
+
+    try:
+        user_id = int(user_id_str)
+    except ValueError:
+        return web.Response(status=400, text="Invalid user ID")
+
+    vote_timestamps[user_id] = datetime.utcnow()
+    print(f"[vote] Recorded vote for user {user_id}")
+
+    # Try to DM the user
+    try:
+        user = await bot.fetch_user(user_id)
+        if user:
+            dm_embed = discord.Embed(
+                title="\U0001f4e5 Thanks for voting!",
+                description=(
+                    "You now have **25% off your cooldowns** for the next 12 hours. Nice.\n\n"
+                    "[Vote again after 12 hours](https://discordbotlist.com/bots/funnything/upvote)"
+                ),
+                color=VOTE_EMBED_COLOR
+            )
+            await user.send(embed=dm_embed)
+    except Exception as e:
+        print(f"[vote] Could not DM user {user_id}: {e}")
+
+    return web.Response(status=200, text="OK")
+
+
+async def start_webhook_server():
+    app = web.Application()
+    app.router.add_post("/dbl-webhook", handle_dbl_webhook)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", VOTE_WEBHOOK_PORT)
+    await site.start()
+    print(f"[vote] Webhook server listening on port {VOTE_WEBHOOK_PORT}")
+
+
+# =========================
 # MESSAGE EVENT (GIF kill/save + clashes)
 # =========================
 
@@ -575,6 +735,21 @@ async def on_message(message):
 
     # Bot mention -> cooldown status
     if bot.user in message.mentions:
+        author_roles_for_mention = [role.name for role in message.author.roles]
+        valid_roles_for_mention = [r for r in author_roles_for_mention if r in ROLE_COOLDOWNS]
+        default_role_id_for_mention = get_default_role(message.guild.id)
+        has_named_role_mention = bool(valid_roles_for_mention)
+        has_required_role_mention = (
+            default_role_id_for_mention is not None and
+            any(r.id == default_role_id_for_mention for r in message.author.roles)
+        )
+        if default_role_id_for_mention is not None and not has_named_role_mention and not has_required_role_mention:
+            required_role = message.guild.get_role(default_role_id_for_mention)
+            role_name = required_role.name if required_role else "the required role"
+            await message.channel.send(
+                f"{message.author.mention}, you can only use GIFs if you have the **{role_name}** role."
+            )
+            return
         msg = build_cooldown_status(message.author, message.guild.id)
         await message.channel.send(msg)
         return
@@ -691,8 +866,9 @@ async def on_message(message):
 
     # Standard vow
     else:
-        effective_cd = apply_vow(base_cd, action, vow)
+        effective_cd = apply_vote_discount(apply_vow(base_cd, action, vow), user_id)
         vow_str = format_vow_label(vow)
+        vote_label = " \U0001f4e5 25% off" if has_active_vote(user_id) else ""
 
         if effective_cd == -1.0:
             await message.channel.send(
@@ -706,7 +882,7 @@ async def on_message(message):
             if now - last < timedelta(hours=effective_cd):
                 remaining = timedelta(hours=effective_cd) - (now - last)
                 await message.channel.send(
-                    f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: "
+                    f"{message.author.mention}, ({role_label}{vow_str}{vote_label}) cooldown remaining: "
                     f"{str(remaining).split('.')[0]}"
                 )
                 return

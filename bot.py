@@ -117,39 +117,6 @@ CLASH_TICKETS = {
 }
 
 # =========================
-# PER-SERVER DEFAULT COOLDOWN
-#
-# Stored in server_settings.json as { "guild_id": { "default_cooldown": float } }
-# Used when a user has none of the named roles in ROLE_COOLDOWNS.
-# Mods (anyone with manage_guild or manage_roles) can change it with !cooldowns <hours>.
-# Default is 12 hours.
-# =========================
-
-SERVER_SETTINGS_FILE = "server_settings.json"
-DEFAULT_COOLDOWN_HOURS = 12.0
-
-# { guild_id (int): { "default_cooldown": float } }
-server_settings: dict[int, dict] = {}
-
-
-def load_server_settings():
-    if not os.path.exists(SERVER_SETTINGS_FILE):
-        return {}
-    with open(SERVER_SETTINGS_FILE, "r") as f:
-        raw = json.load(f)
-    return {int(k): v for k, v in raw.items()}
-
-
-def save_server_settings():
-    with open(SERVER_SETTINGS_FILE, "w") as f:
-        json.dump({str(k): v for k, v in server_settings.items()}, f, indent=2)
-
-
-def get_default_cooldown(guild_id: int) -> float:
-    return server_settings.get(guild_id, {}).get("default_cooldown", DEFAULT_COOLDOWN_HOURS)
-
-
-# =========================
 # BINDING VOW SYSTEM
 #
 # A user may hold AT MOST ONE Binding Vow at a time.
@@ -191,7 +158,7 @@ BINDING_VOWS = {
     },
     "Stack Vow": {
         # Handled via charge system — multipliers not used here
-        "description": "Kill & save CDs ×2, but bank up to 3 uses of each independently",
+        "description": "Kill & save CDs ×3, but bank up to 3 uses of each independently",
     },
 }
 
@@ -206,6 +173,10 @@ stack_vow_charges: dict[int, dict[str, list[datetime]]] = {}
 
 
 def get_active_vow(author_roles: list[str]) -> str | None:
+    """
+    Returns the single Binding Vow the user holds, or None if they have none.
+    Returns "CONFLICT" if they somehow hold multiple vows.
+    """
     held = [vow for vow in BINDING_VOWS if vow in author_roles]
     if len(held) == 0:
         return None
@@ -215,6 +186,13 @@ def get_active_vow(author_roles: list[str]) -> str | None:
 
 
 def apply_vow(base_cooldown_hours: float, action: str, vow_name: str | None) -> float:
+    """
+    Applies a standard Binding Vow multiplier to a base cooldown.
+    Stack Vow is NOT handled here — use the stack_vow_* helpers instead.
+
+    Returns -1.0 if the action is blocked by the vow.
+    Result is otherwise clamped to >= 0.
+    """
     if not vow_name or vow_name in ("CONFLICT", "Stack Vow") or vow_name not in BINDING_VOWS:
         return max(0.0, base_cooldown_hours)
 
@@ -228,6 +206,7 @@ def apply_vow(base_cooldown_hours: float, action: str, vow_name: str | None) -> 
 
 
 def format_vow_label(vow_name: str | None) -> str:
+    """Returns ' [Vow Name]' for display, or '' if no vow / conflict."""
     if not vow_name or vow_name == "CONFLICT":
         return ""
     return f" [{vow_name}]"
@@ -236,6 +215,10 @@ def format_vow_label(vow_name: str | None) -> str:
 # ---- Stack Vow charge helpers ----
 
 def _get_active_charge_timestamps(user_id: int, action: str, cd_hours: float, now: datetime) -> list[datetime]:
+    """
+    Returns the list of still-on-cooldown charge timestamps for the given action.
+    Expired charges (older than one CD period) are pruned in-place.
+    """
     user_data = stack_vow_charges.setdefault(user_id, {"kill": [], "save": []})
     regen_window = timedelta(hours=cd_hours)
     active = [t for t in user_data[action] if now - t < regen_window]
@@ -244,19 +227,25 @@ def _get_active_charge_timestamps(user_id: int, action: str, cd_hours: float, no
 
 
 def stack_vow_available_charges(user_id: int, action: str, cd_hours: float, now: datetime) -> int:
+    """Returns how many charges the user can spend right now."""
     active = _get_active_charge_timestamps(user_id, action, cd_hours, now)
     return max(0, STACK_VOW_MAX_CHARGES - len(active))
 
 
 def stack_vow_consume_charge(user_id: int, action: str, now: datetime):
+    """Records that the user spent one charge at the given time."""
     user_data = stack_vow_charges.setdefault(user_id, {"kill": [], "save": []})
     user_data[action].append(now)
 
 
 def stack_vow_next_regen(user_id: int, action: str, cd_hours: float, now: datetime) -> timedelta | None:
+    """
+    Returns the time until the next charge regenerates.
+    Returns None if the user is already at max charges.
+    """
     active = _get_active_charge_timestamps(user_id, action, cd_hours, now)
     if not active:
-        return None
+        return None  # Already at max — no regen pending
     oldest = min(active)
     regen_at = oldest + timedelta(hours=cd_hours)
     return max(timedelta(0), regen_at - now)
@@ -266,7 +255,35 @@ def stack_vow_next_regen(user_id: int, action: str, cd_hours: float, now: dateti
 # OTHER CONFIG
 # =========================
 
+DEGLOVE_ROLES = {"Shit ass mod", "Good Moderator Morning!"}
+
+DEADLY_SENTENCES_CHANNEL = "deadly-sentences"
 MODLOG_CHANNEL = "modlog"
+BANNED_ROLE_NAME = "Banned"
+
+DEGLOVINGS_FILE = "active_deglovings.json"
+
+def save_deglovings():
+    data = {
+        str(member_id): {
+            "role_ids": entry["role_ids"],
+            "message_id": entry["message_id"],
+            "channel_id": entry["channel_id"],
+            "reglove_at": entry["reglove_at"],
+        }
+        for member_id, entry in active_deglovings.items()
+    }
+    with open(DEGLOVINGS_FILE, "w") as f:
+        json.dump(data, f)
+
+def load_deglovings():
+    if not os.path.exists(DEGLOVINGS_FILE):
+        return {}
+    with open(DEGLOVINGS_FILE, "r") as f:
+        return json.load(f)
+
+# { member_id: { "role_ids": [int], "message_id": int, "channel_id": int, "task": Task, "reglove_at": str } }
+active_deglovings = {}
 
 # Fully independent cooldown timers — kill and save never affect each other.
 last_kill_used: dict[int, datetime] = {}
@@ -281,15 +298,17 @@ pending_clashes: dict[int, dict] = {}
 # =========================
 
 def get_clash_tickets(member_roles: list[str]) -> int:
+    """Returns the clash ticket count for a member based on their best role."""
     best = 0
     for role_name in member_roles:
         tickets = CLASH_TICKETS.get(role_name, 0)
         if tickets > best:
             best = tickets
-    return best if best > 0 else 1
+    return best if best > 0 else 1  # Default to 1 if no clash role found
 
 
 def resolve_clash(attacker_tickets: int, defender_tickets: int) -> bool:
+    """Returns True if attacker wins, False if defender wins."""
     total = attacker_tickets + defender_tickets
     return random.randint(1, total) <= attacker_tickets
 
@@ -312,115 +331,285 @@ async def log_error(guild, label: str, error: Exception):
 
 @bot.event
 async def on_ready():
-    global server_settings
-    server_settings = load_server_settings()
     print(f"Logged in as {bot.user}")
 
+    saved = load_deglovings()
+    for member_id_str, entry in saved.items():
+        member_id = int(member_id_str)
+        reglove_at = datetime.fromisoformat(entry["reglove_at"])
+        now = datetime.utcnow()
+        remaining = (reglove_at - now).total_seconds()
 
-# =========================
-# !cooldowns COMMAND
-# Mods can set the default cooldown (in hours) for users with no recognized role.
-# =========================
+        active_deglovings[member_id] = {
+            "role_ids": entry["role_ids"],
+            "message_id": entry["message_id"],
+            "channel_id": entry["channel_id"],
+            "reglove_at": entry["reglove_at"],
+            "task": None,
+        }
 
-@bot.command(name="cooldowns")
-async def set_cooldown(ctx, hours: str = None):
-    # Check mod permissions
-    if not ctx.author.guild_permissions.manage_roles and not ctx.author.guild_permissions.manage_guild:
-        await ctx.send(f"{ctx.author.mention}, you need the Manage Roles permission to change the default cooldown.")
+        async def scheduled_reglove(mid=member_id, secs=max(remaining, 0)):
+            try:
+                await asyncio.sleep(secs)
+                guild = bot.guilds[0] if bot.guilds else None
+                if guild and mid in active_deglovings:
+                    member = guild.get_member(mid)
+                    if member:
+                        channel_id = active_deglovings[mid].get("channel_id")
+                        announce_channel = guild.get_channel(channel_id) if channel_id else None
+                        await reglove_member(guild, member, announce_channel)
+                    else:
+                        active_deglovings.pop(mid, None)
+                        save_deglovings()
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                guild = bot.guilds[0] if bot.guilds else None
+                if guild:
+                    await log_error(guild, f"on_ready scheduled_reglove for {mid}", e)
+
+        task = asyncio.create_task(scheduled_reglove())
+        active_deglovings[member_id]["task"] = task
+        print(f"[on_ready] Rebuilt deglove timer for member {member_id}, {max(remaining, 0):.0f}s remaining")
+
+
+def parse_duration(duration_str):
+    match = re.fullmatch(r"(\d+)(s|m|h|d)", duration_str.strip().lower())
+    if not match:
+        return None
+    value, unit = int(match.group(1)), match.group(2)
+    multipliers = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    return value * multipliers[unit]
+
+
+async def reglove_member(guild, member, announce_channel):
+    entry = active_deglovings.pop(member.id, None)
+    if not entry:
+        return
+    save_deglovings()
+
+    task = entry.get("task")
+    if task and not task.done():
+        task.cancel()
+
+    saved_role_ids = entry.get("role_ids", [])
+    message_id = entry.get("message_id")
+    channel_id = entry.get("channel_id")
+
+    banned_role = discord.utils.get(guild.roles, name=BANNED_ROLE_NAME)
+    if banned_role and banned_role in member.roles:
+        try:
+            await member.remove_roles(banned_role, reason="Deglove period ended")
+        except Exception as e:
+            await log_error(guild, f"reglove: remove Banned role from {member}", e)
+
+    bot_top_role = guild.me.top_role
+    roles_to_restore = []
+    for role_id in saved_role_ids:
+        role = guild.get_role(role_id)
+        if role is None:
+            print(f"[reglove] Role ID {role_id} no longer exists in guild, skipping")
+            continue
+        if role.managed:
+            continue
+        if role >= bot_top_role:
+            print(f"[reglove] Skipping role above bot's top role: {role.name}")
+            continue
+        roles_to_restore.append(role)
+
+    if roles_to_restore:
+        try:
+            await member.add_roles(*roles_to_restore, reason="Deglove period ended")
+            print(f"[reglove] Restored {len(roles_to_restore)} roles to {member}")
+        except Exception as e:
+            await log_error(guild, f"reglove: restore roles for {member}", e)
+    else:
+        msg = f"[reglove] No restorable roles found for {member} (saved IDs: {saved_role_ids})"
+        print(msg)
+        modlog = discord.utils.get(guild.text_channels, name=MODLOG_CHANNEL)
+        if modlog:
+            await modlog.send(
+                f"⚠️ **Reglove warning:** No roles could be restored for {member.mention}. "
+                f"Saved IDs: `{saved_role_ids}`"
+            )
+
+    if channel_id and message_id:
+        try:
+            sentence_channel = guild.get_channel(channel_id)
+            if sentence_channel:
+                sentence_message = await sentence_channel.fetch_message(message_id)
+                await sentence_message.delete()
+            else:
+                raise ValueError(f"Channel ID {channel_id} not found in guild")
+        except Exception as e:
+            await log_error(guild, f"reglove: delete sentence message {message_id}", e)
+
+    if announce_channel:
+        await announce_channel.send(f"{member.mention} has been regloved. Roles restored.")
+
+
+@bot.command(name="deglove")
+async def deglove(ctx, duration: str = None, *, reason: str = None):
+    author_roles = {role.name for role in ctx.author.roles}
+
+    if not (author_roles & DEGLOVE_ROLES):
+        await ctx.send(f"{ctx.author.mention}, you don't have permission to deglove.")
         return
 
-    if hours is None:
-        current = get_default_cooldown(ctx.guild.id)
-        await ctx.send(f"Current default cooldown for users with no role: **{current}h**\nUsage: `!cooldowns <hours>` (e.g. `!cooldowns 6`)")
+    if not ctx.message.reference:
+        await ctx.send("You need to reply to someone's message to deglove them.")
+        return
+
+    if not duration:
+        await ctx.send("Usage: `!deglove <duration> <reason>` (e.g. `!deglove 10m being annoying`)")
+        return
+
+    seconds = parse_duration(duration)
+    if seconds is None:
+        await ctx.send("Invalid duration format. Use `30s`, `10m`, `2h`, or `1d`.")
+        return
+
+    if not reason:
+        await ctx.send("Please provide a reason. Usage: `!deglove <duration> <reason>`")
         return
 
     try:
-        new_cd = float(hours)
-        if new_cd < 0:
-            raise ValueError
-    except ValueError:
-        await ctx.send("Invalid value. Usage: `!cooldowns <hours>` — must be a non-negative number (e.g. `!cooldowns 6` or `!cooldowns 0.5`)")
+        replied_message = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+    except Exception as e:
+        await ctx.send("Couldn't fetch the replied message.")
+        await log_error(ctx.guild, "deglove: fetch replied message", e)
         return
 
-    if ctx.guild.id not in server_settings:
-        server_settings[ctx.guild.id] = {}
-    server_settings[ctx.guild.id]["default_cooldown"] = new_cd
-    save_server_settings()
+    member = ctx.guild.get_member(replied_message.author.id)
 
-    await ctx.send(f"✅ Default cooldown for roleless users set to **{new_cd}h**")
+    if not member:
+        await ctx.send("Couldn't find that member in the server.")
+        return
+
+    if member.bot:
+        await ctx.send("You can't deglove a bot.")
+        return
+
+    if member.id in active_deglovings:
+        await ctx.send(f"{member.mention} is already degloved.")
+        return
+
+    banned_role = discord.utils.get(ctx.guild.roles, name=BANNED_ROLE_NAME)
+    if not banned_role:
+        await ctx.send(f'Could not find a role named "{BANNED_ROLE_NAME}". Make sure it exists.')
+        return
+
+    bot_top_role = ctx.guild.me.top_role
+    saved_role_ids = [
+        r.id for r in member.roles
+        if r != ctx.guild.default_role and not r.managed and r < bot_top_role
+    ]
+    print(f"[deglove] Saving role IDs for {member}: {saved_role_ids}")
+
+    roles_to_remove = [ctx.guild.get_role(rid) for rid in saved_role_ids]
+    roles_to_remove = [r for r in roles_to_remove if r]
+    if roles_to_remove:
+        try:
+            await member.remove_roles(*roles_to_remove, reason=f"Degloved by {ctx.author}")
+        except discord.Forbidden as e:
+            await ctx.send("I don't have permission to remove that member's roles.")
+            await log_error(ctx.guild, f"deglove: remove roles from {member}", e)
+            return
+        except Exception as e:
+            await ctx.send("Something went wrong removing roles.")
+            await log_error(ctx.guild, f"deglove: remove roles from {member}", e)
+            return
+
+    try:
+        await member.add_roles(banned_role, reason=f"Degloved by {ctx.author}: {reason}")
+    except discord.Forbidden as e:
+        await ctx.send("I don't have permission to assign the Banned role.")
+        await log_error(ctx.guild, f"deglove: add Banned role to {member}", e)
+        if roles_to_remove:
+            await member.add_roles(*roles_to_remove, reason="Deglove failed, restoring roles")
+        return
+    except Exception as e:
+        await ctx.send("Something went wrong assigning the Banned role.")
+        await log_error(ctx.guild, f"deglove: add Banned role to {member}", e)
+        return
+
+    sentence_channel = discord.utils.get(ctx.guild.text_channels, name=DEADLY_SENTENCES_CHANNEL)
+    message_id = None
+    channel_id = None
+    if sentence_channel:
+        try:
+            sentence_message = await sentence_channel.send(
+                f"🩸 **DEGLOVED** 🩸\n"
+                f"**{member.display_name}** has been degloved by {ctx.author.mention}\n"
+                f"**Duration:** {duration}\n"
+                f"**Reason:** {reason}"
+            )
+            message_id = sentence_message.id
+            channel_id = sentence_channel.id
+        except Exception as e:
+            await log_error(ctx.guild, "deglove: send deadly-sentences message", e)
+    else:
+        await ctx.send(f'Warning: Could not find channel "{DEADLY_SENTENCES_CHANNEL}" to post the sentence.')
+
+    await ctx.send("https://klipy.com/gifs/gojo-geto-suguru-2--k01KQGSQKMYQQE758SGTJ41WF3X")
+    await ctx.send(f"{member.mention} has been sealed for {duration}")
+
+    active_deglovings[member.id] = {
+        "role_ids": saved_role_ids,
+        "message_id": message_id,
+        "channel_id": channel_id,
+        "task": None,
+        "reglove_at": (datetime.utcnow() + timedelta(seconds=seconds)).isoformat(),
+    }
+    save_deglovings()
+
+    async def scheduled_reglove():
+        try:
+            await asyncio.sleep(seconds)
+            if member.id in active_deglovings:
+                await reglove_member(ctx.guild, member, ctx.channel)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            await log_error(ctx.guild, f"scheduled_reglove for {member}", e)
+
+    task = asyncio.create_task(scheduled_reglove())
+    active_deglovings[member.id]["task"] = task
 
 
-# =========================
-# !help COMMAND
-# =========================
+@bot.command(name="reglove")
+async def reglove(ctx):
+    author_roles = {role.name for role in ctx.author.roles}
 
-@bot.command(name="help")
-async def help_command(ctx):
-    default_cd = get_default_cooldown(ctx.guild.id)
+    if not (author_roles & DEGLOVE_ROLES):
+        await ctx.send(f"{ctx.author.mention}, you don't have permission to reglove.")
+        return
 
-    embed = discord.Embed(
-        title="Bot Help",
-        color=discord.Color.blurple()
-    )
+    if not ctx.message.reference:
+        await ctx.send("You need to reply to the message of the person you want to reglove.")
+        return
 
-    embed.add_field(
-        name="How it works",
-        value=(
-            "Reply to someone's message with a **kill GIF** to time them out (90s).\n"
-            "Reply to a timed-out user's message with a **save GIF** to free them early.\n"
-            "If the target replies with a kill GIF within 5 seconds, a **Clash** happens — "
-            "whoever has more clash tickets wins."
-        ),
-        inline=False
-    )
+    try:
+        replied_message = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+    except Exception as e:
+        await ctx.send("Couldn't fetch the replied message.")
+        await log_error(ctx.guild, "reglove: fetch replied message", e)
+        return
 
-    role_lines = "\n".join(
-        f"**{role}** — {cd}h CD" if cd > 0 else f"**{role}** — no cooldown 😈"
-        for role, cd in ROLE_COOLDOWNS.items()
-    )
-    embed.add_field(
-        name="Role Cooldowns",
-        value=role_lines,
-        inline=False
-    )
+    member = ctx.guild.get_member(replied_message.author.id)
 
-    embed.add_field(
-        name="No matching role?",
-        value=f"Default cooldown: **{default_cd}h** (mods can change this with `!cooldowns <hours>`)",
-        inline=False
-    )
+    if not member:
+        await ctx.send("Couldn't find that member in the server.")
+        return
 
-    clash_lines = "\n".join(
-        f"**{role}** — {tickets} tickets"
-        for role, tickets in CLASH_TICKETS.items()
-    )
-    embed.add_field(
-        name="Clash Tickets",
-        value=clash_lines + "\n*No role: 1 ticket*",
-        inline=False
-    )
+    if member.id not in active_deglovings:
+        await ctx.send(f"{member.mention} isn't currently degloved.")
+        return
 
-    vow_lines = "\n".join(
-        f"**{name}** — {data['description']}"
-        for name, data in BINDING_VOWS.items()
-    )
-    embed.add_field(
-        name="Binding Vows",
-        value=vow_lines,
-        inline=False
-    )
-
-    embed.add_field(
-        name="Commands",
-        value=(
-            "`!help` — show this message\n"
-            "`@bot` — check your current cooldown status\n"
-            "`!cooldowns [hours]` — view or set the default cooldown *(mods only)*"
-        ),
-        inline=False
-    )
-
-    await ctx.send(embed=embed)
+    try:
+        await reglove_member(ctx.guild, member, ctx.channel)
+    except Exception as e:
+        await log_error(ctx.guild, f"reglove command for {member}", e)
 
 
 @bot.event
@@ -435,18 +624,15 @@ async def on_message(message):
     # =========================
     if bot.user in message.mentions:
         valid_roles = [r for r in author_roles if r in ROLE_COOLDOWNS]
-        default_cd = get_default_cooldown(message.guild.id)
 
-        # Determine base CD: use best role if available, otherwise server default
-        if valid_roles:
-            best_role = min(valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
-            base_cd = ROLE_COOLDOWNS[best_role]
-            role_label = best_role
-        else:
-            best_role = None
-            base_cd = default_cd
-            role_label = f"default ({default_cd}h)"
+        if not valid_roles:
+            await message.channel.send(
+                f"{message.author.mention}, you don't have any cooldown role."
+            )
+            return
 
+        best_role = min(valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
+        base_cd = ROLE_COOLDOWNS[best_role]
         vow = get_active_vow(author_roles)
         vow_str = format_vow_label(vow)
         now = datetime.utcnow()
@@ -461,7 +647,7 @@ async def on_message(message):
 
         if base_cd == 0:
             await message.channel.send(
-                f"{message.author.mention}, ({role_label}{vow_str}) you have no cooldown 😈"
+                f"{message.author.mention}, ({best_role}{vow_str}) you have no cooldown 😈"
             )
             return
 
@@ -478,7 +664,7 @@ async def on_message(message):
                 return charge_pips
 
             await message.channel.send(
-                f"{message.author.mention}, ({role_label} [Stack Vow]) CD: {sv_cd:.4g}h per charge\n"
+                f"{message.author.mention}, ({best_role} [Stack Vow]) CD: {sv_cd:.4g}h per charge\n"
                 f"☠️ Kill charges: {charge_status('kill')}\n"
                 f"💚 Save charges: {charge_status('save')}"
             )
@@ -502,12 +688,13 @@ async def on_message(message):
             return f"**{str(remaining).split('.')[0]}** remaining"
 
         if kill_cd == save_cd and last_kill == last_save:
+            # Both timers are identical — show a single line for cleanliness
             await message.channel.send(
-                f"{message.author.mention}, ({role_label}{vow_str}) cooldown: {format_cd(kill_cd, last_kill)}"
+                f"{message.author.mention}, ({best_role}{vow_str}) cooldown: {format_cd(kill_cd, last_kill)}"
             )
         else:
             await message.channel.send(
-                f"{message.author.mention}, ({role_label}{vow_str})\n"
+                f"{message.author.mention}, ({best_role}{vow_str})\n"
                 f"☠️ Kill CD: {format_cd(kill_cd, last_kill)}\n"
                 f"💚 Save CD: {format_cd(save_cd, last_save)}"
             )
@@ -528,6 +715,7 @@ async def on_message(message):
     if is_kill_gif and message.reference.message_id in pending_clashes:
         clash_data = pending_clashes.pop(message.reference.message_id, None)
         if clash_data and message.author.id == clash_data["defender"].id:
+            # Cancel the pending timeout task
             clash_data["task"].cancel()
 
             attacker = clash_data["attacker"]
@@ -540,6 +728,7 @@ async def on_message(message):
             attacker_tickets = get_clash_tickets(attacker_roles)
             defender_tickets = get_clash_tickets(defender_roles)
 
+            # Stamp cooldown for defender
             now = datetime.utcnow()
             last_kill_used[defender.id] = now
 
@@ -584,18 +773,14 @@ async def on_message(message):
         return
 
     valid_roles = [r for r in author_roles if r in ROLE_COOLDOWNS]
-    default_cd = get_default_cooldown(message.guild.id)
+    if not valid_roles:
+        await message.channel.send(
+            f"{message.author.mention}, you don't have permission to use this GIF!"
+        )
+        return
 
-    # Determine base CD and label
-    if valid_roles:
-        best_role = min(valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
-        base_cd = ROLE_COOLDOWNS[best_role]
-        role_label = best_role
-    else:
-        best_role = None
-        base_cd = default_cd
-        role_label = f"default ({default_cd}h)"
-
+    best_role = min(valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
+    base_cd = ROLE_COOLDOWNS[best_role]
     vow = get_active_vow(author_roles)
     now = datetime.utcnow()
     user_id = message.author.id
@@ -623,6 +808,7 @@ async def on_message(message):
             )
             return
 
+        # Charge available — consume it and proceed to the action
         stack_vow_consume_charge(user_id, action, now)
         remaining_after = available - 1
         vow_str = f" [Stack Vow | {remaining_after}/{STACK_VOW_MAX_CHARGES} {action} charges left]"
@@ -634,23 +820,26 @@ async def on_message(message):
         effective_cd = apply_vow(base_cd, action, vow)
         vow_str = format_vow_label(vow)
 
+        # Vow blocks this action entirely
         if effective_cd == -1.0:
             await message.channel.send(
                 f"{message.author.mention}, your {vow} forbids you from killing. 🩹"
             )
             return
 
+        # Check and enforce the independent timer for this specific action
         last = last_kill_used.get(user_id) if action == "kill" else last_save_used.get(user_id)
 
         if effective_cd > 0 and last:
             if now - last < timedelta(hours=effective_cd):
                 remaining = timedelta(hours=effective_cd) - (now - last)
                 await message.channel.send(
-                    f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: "
+                    f"{message.author.mention}, ({best_role}{vow_str}) cooldown remaining: "
                     f"{str(remaining).split('.')[0]}"
                 )
                 return
 
+        # Stamp only the timer for this action — the other is unaffected
         if action == "kill":
             last_kill_used[user_id] = now
         else:
@@ -724,6 +913,7 @@ async def on_message(message):
                 else:
                     await message.channel.send("Couldn't find you in the server to apply the self-mute??")
         else:
+            # Register pending clash and wait CLASH_WINDOW_SECONDS before timing out
             attacker = message.author
             defender = member_to_timeout
             kill_message_id = message.id
@@ -731,6 +921,7 @@ async def on_message(message):
             async def clash_or_timeout():
                 try:
                     await asyncio.sleep(CLASH_WINDOW_SECONDS)
+                    # If still pending (no clash happened), apply timeout normally
                     if kill_message_id in pending_clashes:
                         pending_clashes.pop(kill_message_id, None)
                         try:

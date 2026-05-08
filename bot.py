@@ -67,14 +67,15 @@ TARGET_GIFS = [
     "https://tenor.com/view/reggie-megumi-divine-dog-totality-jujutsu-kaisen-gif-16803502898948526832",
     "https://tenor.com/view/megumi-reggie-star-max-elephant-jujutsu-kaisen-gif-17848841313289141645",
     "https://tenor.com/view/hazenoki-iori-iori-hazenoki-reggie-reggie-star-gif-15470925985641586022",
-    "https://tenor.com/view/ryu-ishigori-kurourushi-and-uro-takako-gif-10500026154609357939"
+    "https://tenor.com/view/ryu-ishigori-kurourushi-and-uro-takako-gif-10500026154609357939",
+    "https://tenor.com/view/indian-meme-indian-guy-indian-meme-tuff-gif-17449687295227939133"
 ]
 
 UNTIMEOUT_GIFS = [
     "https://tenor.com/view/doctor-manhattan-watchmen-marvel-gif-21030500",
     "https://klipy.com/gifs/doctor-manhattan-watchmen",
     "https://tenor.com/view/revive-gif-23866294",
-    "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664"
+    "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664",
     "https://tenor.com/view/todo-jjk-jujutsu-kaisen-shibuya-arc-mahito-gif-11933159284027340768",
     "https://tenor.com/view/the-boys-homelander-season-5-tung-tung-tung-sahur-tung-tung-sahur-gif-7005128074439649595",
     "https://tenor.com/view/he-has-me-gif-13654467562542512739",
@@ -122,7 +123,8 @@ ROLE_COOLDOWNS = {
     "Chud": 4,
     "Otis BFF \u2764\ufe0f": 4,
     "Shit ass mod": 0,
-    "Good Moderator Morning!": 0
+    "Good Moderator Morning!": 0,
+    "guh tester": 0
 }
 
 CLASH_TICKETS = {
@@ -224,7 +226,7 @@ BINDING_VOWS = {
     "Miracle Vow": {
         "kill_multiplier": 2.5,
         "save_multiplier": 2.5,
-        "description": "2.5x CD. Collect miracles when someone on CD tries to guh you or you get saved. 3 miracles = auto-block a guh. Max 6. You only deal 30s timeout.",
+        "description": "2.5x CD. Collect miracles when someone on CD tries to guh you, when you save someone, or when you get saved. 2 miracles = auto-block a guh. Max 6. You only deal 30s timeout.",
     },
     "Random Vow": {
         "kill_multiplier": 1.0,
@@ -236,6 +238,11 @@ BINDING_VOWS = {
         "save_multiplier": None,
         "description": "Cannot kill or save anyone. Immune to being guhed (except by Good Moderator Morning).",
     },
+    "Ragebait Vow": {
+        "kill_multiplier": 1.0,
+        "save_multiplier": 1.0,
+        "description": "Kill GIFs don't timeout the target — instead adds 1.5x to their kill CD. Ragebait ability CD is 0.5x your role CD. Save works normally.",
+    },
 }
 
 STACK_VOW_MULTIPLIER = 2.0
@@ -243,6 +250,7 @@ STACK_VOW_MAX_CHARGES = 3
 stack_vow_charges: dict[int, dict[str, list[datetime]]] = {}
 
 MIRACLE_MAX = 6
+MIRACLE_BLOCK_COST = 2
 miracle_counts: dict[int, int] = {}
 
 # { user_id: datetime } — last time a miracle was gained from a failed timeout
@@ -252,6 +260,12 @@ MIRACLE_GAIN_COOLDOWN_HOURS = 1.0
 
 # { user_id: { "kill": float | None, "save": float | None } }
 random_vow_cds: dict[int, dict[str, float | None]] = {}
+
+# { user_id: datetime } — last time Ragebait ability was used
+ragebait_last_used: dict[int, datetime] = {}
+
+# { user_id: float } — current kill CD multiplier added by Ragebait (stacks as hours added)
+ragebait_kill_cd_added: dict[int, float] = {}
 
 
 def get_active_vow(author_roles: list[str]) -> str | None:
@@ -337,6 +351,26 @@ def record_miracle_gain_from_failed_timeout(user_id: int):
 def consume_miracles(user_id: int, amount: int):
     current = miracle_counts.get(user_id, 0)
     miracle_counts[user_id] = max(0, current - amount)
+
+
+def get_ragebait_cd(user_id: int, base_cd: float) -> float:
+    """Returns the ragebait ability cooldown (0.5x role CD)."""
+    return base_cd * 0.5
+
+
+def is_ragebait_on_cd(user_id: int, base_cd: float, now: datetime) -> bool:
+    last = ragebait_last_used.get(user_id)
+    if not last:
+        return False
+    return now - last < timedelta(hours=get_ragebait_cd(user_id, base_cd))
+
+
+def get_ragebait_remaining(user_id: int, base_cd: float, now: datetime) -> timedelta:
+    last = ragebait_last_used.get(user_id)
+    if not last:
+        return timedelta(0)
+    cd = timedelta(hours=get_ragebait_cd(user_id, base_cd))
+    return max(timedelta(0), cd - (now - last))
 
 
 def get_random_vow_cd(user_id: int, action: str) -> float | None:
@@ -558,6 +592,25 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
     if vow == "Bitchout Vow":
         return f"{member.mention}, ({role_label} [Bitchout Vow]) you cannot kill or save anyone, but you're immune to guhs."
 
+    if vow == "Ragebait Vow":
+        ragebait_cd = get_ragebait_cd(user_id, base_cd)
+        save_cd = apply_vote_discount(base_cd, user_id)
+        last_save = last_save_used.get(user_id)
+
+        def format_ragebait_cd(hours: float, last: datetime | None) -> str:
+            if not last or now - last >= timedelta(hours=hours):
+                return "ready \u2705"
+            remaining = timedelta(hours=hours) - (now - last)
+            return f"**{str(remaining).split('.')[0]}** remaining"
+
+        ragebait_remaining = get_ragebait_remaining(user_id, base_cd, now)
+        ragebait_status = "ready \u2705" if ragebait_remaining.total_seconds() == 0 else f"**{str(ragebait_remaining).split('.')[0]}** remaining"
+        return (
+            f"{member.mention}, ({role_label} [Ragebait Vow])\n"
+            f"\U0001f621 Ragebait CD ({ragebait_cd:.4g}h): {ragebait_status}\n"
+            f"\U0001f49a Save CD ({base_cd}h): {format_ragebait_cd(save_cd, last_save)}"
+        )
+
     kill_cd = apply_vote_discount(apply_vow(base_cd, "kill", vow), user_id)
     save_cd = apply_vote_discount(apply_vow(base_cd, "save", vow), user_id)
     last_kill = last_kill_used.get(user_id)
@@ -595,6 +648,13 @@ async def on_ready():
     server_settings = load_server_settings()
     print(f"Logged in as {bot.user}")
     print("Slash commands are registered globally. Use !sync to push any changes to Discord.")
+    # On startup, Stack Vow users begin with 1 charge each (pre-consume 2 of 3)
+    now = datetime.utcnow()
+    for action in ("kill", "save"):
+        for uid in list(stack_vow_charges.keys()):
+            user_data = stack_vow_charges[uid]
+            # Clear and set 2 consumed timestamps so only 1 charge is available
+            user_data[action] = [now, now]
     await start_webhook_server()
 
 
@@ -888,30 +948,51 @@ async def on_message(message):
                 sv_cd = defender_base_cd * STACK_VOW_MULTIPLIER
                 defender_available = stack_vow_available_charges(defender.id, "kill", sv_cd, now)
                 defender_on_cd = defender_available == 0
+                defender_cd_penalized = False
             elif defender_vow == "Random Vow":
                 rv_cd = get_random_vow_cd(defender.id, "kill")
                 last_kill = last_kill_used.get(defender.id)
-                # Not on CD if they have no rolled CD, or if the stamp was within the clash window (they just attacked)
                 if rv_cd is None or last_kill is None:
                     defender_on_cd = False
+                    defender_cd_penalized = False
                 elif now - last_kill <= timedelta(seconds=CLASH_WINDOW_SECONDS + 1):
-                    defender_on_cd = False  # they just used a kill gif, allow clash back
+                    defender_on_cd = False
+                    defender_cd_penalized = False
                 else:
-                    defender_on_cd = now - last_kill < timedelta(hours=rv_cd)
+                    defender_on_cd = False  # can still clash but penalized
+                    defender_cd_penalized = now - last_kill < timedelta(hours=rv_cd)
             elif defender_vow == "Bitchout Vow":
                 defender_on_cd = True
+                defender_cd_penalized = False
             elif defender_vow == "Miracle Vow":
                 miracle_cd = apply_vote_discount(defender_base_cd * 2.5, defender.id)
                 last_kill = last_kill_used.get(defender.id)
                 if last_kill is None:
                     defender_on_cd = False
+                    defender_cd_penalized = False
                 elif now - last_kill <= timedelta(seconds=CLASH_WINDOW_SECONDS + 1):
-                    defender_on_cd = False  # they just used a kill gif, allow clash back
+                    defender_on_cd = False
+                    defender_cd_penalized = False
                 else:
-                    defender_on_cd = now - last_kill < timedelta(hours=miracle_cd)
+                    defender_on_cd = False
+                    defender_cd_penalized = now - last_kill < timedelta(hours=miracle_cd)
             else:
                 effective_defender_cd = apply_vote_discount(apply_vow(defender_base_cd, "kill", defender_vow), defender.id)
-                defender_on_cd = is_on_cooldown(defender.id, "kill", effective_defender_cd, now)
+                if effective_defender_cd <= 0:
+                    defender_on_cd = False
+                    defender_cd_penalized = False
+                else:
+                    last_kill = last_kill_used.get(defender.id)
+                    if last_kill is None:
+                        defender_on_cd = False
+                        defender_cd_penalized = False
+                    elif now - last_kill <= timedelta(seconds=CLASH_WINDOW_SECONDS + 1):
+                        defender_on_cd = False
+                        defender_cd_penalized = False
+                    else:
+                        still_on_cd = now - last_kill < timedelta(hours=effective_defender_cd)
+                        defender_on_cd = False
+                        defender_cd_penalized = still_on_cd
 
             if defender_on_cd:
                 await bot.process_commands(message)
@@ -928,7 +1009,17 @@ async def on_message(message):
             attacker_tickets = get_clash_tickets(attacker_roles)
             defender_tickets = get_clash_tickets(defender_roles)
 
+            # Apply penalty if defender was on CD (50% reduced win tickets)
+            if defender_cd_penalized:
+                defender_tickets = max(1, defender_tickets // 2)
+
+            # Stamp CD for both attacker and defender
             last_kill_used[defender.id] = now
+            last_kill_used[attacker.id] = now
+            if attacker_vow == "Random Vow":
+                set_random_vow_cd(attacker.id, "kill")
+            if defender_vow == "Random Vow":
+                set_random_vow_cd(defender.id, "kill")
 
             clash_gif = pick_clash_gif(attacker_roles, defender_roles)
             await message.channel.send(clash_gif)
@@ -942,6 +1033,13 @@ async def on_message(message):
             winner = attacker if attacker_wins else defender
 
             await asyncio.sleep(3)
+
+            # If defender was on CD and wins, loser doesn't get timed out but CD resets
+            if defender_cd_penalized and not attacker_wins:
+                last_kill_used[loser.id] = now
+                await message.channel.send(f"{winner.mention} WON (on CD clash)\n{loser.mention} escapes timeout but CD resets")
+                await bot.process_commands(message)
+                return
 
             if attacker_wins and attacker_vow == "Hakari Vow":
                 if random.random() < 0.50:
@@ -1055,7 +1153,7 @@ async def on_message(message):
 
     if vow == "Bitchout Vow":
         if action == "kill":
-            await message.channel.send(f"{message.author.mention}, your **Bitchout Vow** forbids you from killing. \U0001fa79")
+            await message.channel.send("you're a bitch but a guh free bitch atleast")
         else:
             await message.channel.send(f"{message.author.mention}, your **Bitchout Vow** forbids you from saving. \U0001fa79")
         return
@@ -1104,6 +1202,20 @@ async def on_message(message):
             )
             return
         vow_str = " [Miracle Vow]"
+
+    elif vow == "Ragebait Vow":
+        # Save uses normal role CD; kill ability CD is checked inside the kill gif section
+        if action == "save":
+            save_cd = apply_vote_discount(base_cd, user_id)
+            last = last_save_used.get(user_id)
+            if last and now - last < timedelta(hours=save_cd):
+                remaining = timedelta(hours=save_cd) - (now - last)
+                await message.channel.send(
+                    f"{message.author.mention}, [Ragebait Vow] save cooldown remaining: **{str(remaining).split('.')[0]}**"
+                )
+                return
+            last_save_used[user_id] = now
+        vow_str = " [Ragebait Vow]"
 
     # =========================
     # STANDARD VOW
@@ -1190,6 +1302,13 @@ async def on_message(message):
                     f"{member_to_timeout.mention} has been freed early by "
                     f"{message.author.mention}{vow_str}"
                 )
+                # Miracle Vow saver gains a miracle
+                if vow == "Miracle Vow":
+                    new_count = add_miracle(user_id)
+                    if new_count == -1:
+                        await message.channel.send(f"{message.author.mention} is already at max miracles ({MIRACLE_MAX}/{MIRACLE_MAX})!")
+                    else:
+                        await message.channel.send(f"\u2728 {message.author.mention} got a miracle for saving! They now have **{new_count}/{MIRACLE_MAX}** miracles.")
                 saved_roles = [r.name for r in member_to_timeout.roles]
                 saved_vow = get_active_vow(saved_roles)
                 if saved_vow == "Miracle Vow":
@@ -1210,6 +1329,40 @@ async def on_message(message):
     # KILL GIF
     # =========================
     if is_kill_gif:
+        # Ragebait Vow: instead of timing out, adds 1.5x to target's kill CD
+        if vow == "Ragebait Vow":
+            ragebait_cd = get_ragebait_cd(user_id, base_cd)
+            if is_ragebait_on_cd(user_id, base_cd, now):
+                remaining = get_ragebait_remaining(user_id, base_cd, now)
+                await message.channel.send(
+                    f"{message.author.mention}, [Ragebait Vow] ability on cooldown: **{str(remaining).split('.')[0]}**"
+                )
+                return
+            # Apply 1.5x kill CD to target
+            target_roles = [r.name for r in member_to_timeout.roles]
+            target_valid_roles = [r for r in target_roles if r in ROLE_COOLDOWNS]
+            if target_valid_roles:
+                target_best = min(target_valid_roles, key=lambda r: ROLE_COOLDOWNS[r])
+                target_base_cd = ROLE_COOLDOWNS[target_best]
+            else:
+                target_base_cd = get_default_cooldown(message.guild.id)
+            added_hours = target_base_cd * 1.5
+            # Extend their current kill CD by setting last_kill_used further back (or forward)
+            target_last_kill = last_kill_used.get(member_to_timeout.id)
+            if target_last_kill:
+                # Extend by pushing the stamp back so they appear to have used it later
+                last_kill_used[member_to_timeout.id] = target_last_kill + timedelta(hours=added_hours)
+            else:
+                # No existing CD — set their stamp to now and extend it
+                last_kill_used[member_to_timeout.id] = now + timedelta(hours=added_hours)
+            ragebait_last_used[user_id] = now
+            await message.channel.send(
+                f"{message.author.mention} [Ragebait Vow] raged at {member_to_timeout.mention}! "
+                f"Their kill CD has been extended by {added_hours:.2g}h."
+            )
+            await bot.process_commands(message)
+            return
+
         timeout_duration = 180 if vow == "Destruction Vow" else TIMEOUT_SECONDS
 
         if vow == "Random Vow":
@@ -1227,11 +1380,11 @@ async def on_message(message):
         defender_vow_check = get_active_vow(defender_roles_list)
         if defender_vow_check == "Miracle Vow":
             miracles = get_miracle_count(defender.id)
-            if miracles >= 3:
-                consume_miracles(defender.id, 3)
+            if miracles >= MIRACLE_BLOCK_COST:
+                consume_miracles(defender.id, MIRACLE_BLOCK_COST)
                 await message.channel.send(
                     f"{MIRACLE_BLOCK_GIF}\n"
-                    f"\u2728 {defender.mention}'s miracle blocked the guh! 3 miracles consumed. They now have **{get_miracle_count(defender.id)}/{MIRACLE_MAX}** miracles."
+                    f"\u2728 {defender.mention}'s miracle blocked the guh! {MIRACLE_BLOCK_COST} miracles consumed. They now have **{get_miracle_count(defender.id)}/{MIRACLE_MAX}** miracles."
                 )
                 if vow == "Random Vow":
                     last_kill_used.pop(user_id, None)

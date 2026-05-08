@@ -245,6 +245,11 @@ stack_vow_charges: dict[int, dict[str, list[datetime]]] = {}
 MIRACLE_MAX = 6
 miracle_counts: dict[int, int] = {}
 
+# { user_id: datetime } — last time a miracle was gained from a failed timeout
+miracle_gain_cooldown: dict[int, datetime] = {}
+
+MIRACLE_GAIN_COOLDOWN_HOURS = 1.0
+
 # { user_id: { "kill": float | None, "save": float | None } }
 random_vow_cds: dict[int, dict[str, float | None]] = {}
 
@@ -315,6 +320,18 @@ def add_miracle(user_id: int) -> int:
         return -1
     miracle_counts[user_id] = current + 1
     return miracle_counts[user_id]
+
+
+def can_gain_miracle_from_failed_timeout(user_id: int) -> bool:
+    """Returns True if the user can gain a miracle from a failed timeout (1h cooldown)."""
+    last = miracle_gain_cooldown.get(user_id)
+    if not last:
+        return True
+    return datetime.utcnow() - last >= timedelta(hours=MIRACLE_GAIN_COOLDOWN_HOURS)
+
+
+def record_miracle_gain_from_failed_timeout(user_id: int):
+    miracle_gain_cooldown[user_id] = datetime.utcnow()
 
 
 def consume_miracles(user_id: int, amount: int):
@@ -874,13 +891,24 @@ async def on_message(message):
             elif defender_vow == "Random Vow":
                 rv_cd = get_random_vow_cd(defender.id, "kill")
                 last_kill = last_kill_used.get(defender.id)
-                defender_on_cd = rv_cd is not None and last_kill is not None and now - last_kill < timedelta(hours=rv_cd)
+                # Not on CD if they have no rolled CD, or if the stamp was within the clash window (they just attacked)
+                if rv_cd is None or last_kill is None:
+                    defender_on_cd = False
+                elif now - last_kill <= timedelta(seconds=CLASH_WINDOW_SECONDS + 1):
+                    defender_on_cd = False  # they just used a kill gif, allow clash back
+                else:
+                    defender_on_cd = now - last_kill < timedelta(hours=rv_cd)
             elif defender_vow == "Bitchout Vow":
                 defender_on_cd = True
             elif defender_vow == "Miracle Vow":
                 miracle_cd = apply_vote_discount(defender_base_cd * 2.5, defender.id)
                 last_kill = last_kill_used.get(defender.id)
-                defender_on_cd = last_kill is not None and now - last_kill < timedelta(hours=miracle_cd)
+                if last_kill is None:
+                    defender_on_cd = False
+                elif now - last_kill <= timedelta(seconds=CLASH_WINDOW_SECONDS + 1):
+                    defender_on_cd = False  # they just used a kill gif, allow clash back
+                else:
+                    defender_on_cd = now - last_kill < timedelta(hours=miracle_cd)
             else:
                 effective_defender_cd = apply_vote_discount(apply_vow(defender_base_cd, "kill", defender_vow), defender.id)
                 defender_on_cd = is_on_cooldown(defender.id, "kill", effective_defender_cd, now)
@@ -1100,7 +1128,13 @@ async def on_message(message):
                     target_roles = [r.name for r in member_to_timeout.roles]
                     target_vow = get_active_vow(target_roles)
                     if target_vow == "Miracle Vow":
+                        if not can_gain_miracle_from_failed_timeout(member_to_timeout.id):
+                            await message.channel.send(
+                                f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: {str(remaining).split('.')[0]}"
+                            )
+                            return
                         new_count = add_miracle(member_to_timeout.id)
+                        record_miracle_gain_from_failed_timeout(member_to_timeout.id)
                         if new_count == -1:
                             await message.channel.send(
                                 f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: {str(remaining).split('.')[0]}\n"

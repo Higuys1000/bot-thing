@@ -82,7 +82,9 @@ TARGET_GIFS = [
     "https://tenor.com/view/itadori-angry-jujutsu-kaisen-episode12-gif-19653132",
     "https://tenor.com/view/todo-jjk-jujutsu-kaisen-shibuya-arc-mahito-gif-11933159284027340768",
     "https://tenor.com/view/d9luxe-gif-4267568862040013492",
-    "https://tenor.com/view/kinblood-lebron-dunk-gif-12278440"
+    "https://tenor.com/view/kinblood-lebron-dunk-gif-12278440",
+    "https://tenor.com/view/nanako-gif-366179704676552608",
+    "https://cdn.discordapp.com/attachments/1501576319597674547/1501657404528656454/image0.gif"
 ]
 
 UNTIMEOUT_GIFS = [

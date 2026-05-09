@@ -224,6 +224,76 @@ def get_default_role(guild_id: int) -> int | None:
 
 
 # =========================
+# COOLDOWN PERSISTENCE
+# =========================
+
+COOLDOWNS_FILE = "cooldowns.json"
+
+
+def load_cooldowns():
+    if not os.path.exists(COOLDOWNS_FILE):
+        return
+    try:
+        with open(COOLDOWNS_FILE, "r") as f:
+            raw = json.load(f)
+    except Exception as e:
+        print(f"[cooldowns] Failed to load cooldowns.json: {e}")
+        return
+
+    for uid_str, ts in raw.get("last_kill_used", {}).items():
+        last_kill_used[int(uid_str)] = datetime.fromisoformat(ts)
+    for uid_str, ts in raw.get("last_save_used", {}).items():
+        last_save_used[int(uid_str)] = datetime.fromisoformat(ts)
+    for uid_str, count in raw.get("miracle_counts", {}).items():
+        miracle_counts[int(uid_str)] = count
+    for uid_str, ts in raw.get("miracle_gain_cooldown", {}).items():
+        miracle_gain_cooldown[int(uid_str)] = datetime.fromisoformat(ts)
+    for uid_str, ts in raw.get("ragebait_last_used", {}).items():
+        ragebait_last_used[int(uid_str)] = datetime.fromisoformat(ts)
+    for uid_str, added in raw.get("ragebait_kill_cd_added", {}).items():
+        ragebait_kill_cd_added[int(uid_str)] = added
+    for uid_str, cds in raw.get("random_vow_cds", {}).items():
+        random_vow_cds[int(uid_str)] = cds
+    for uid_str, ts in raw.get("vote_timestamps", {}).items():
+        vote_timestamps[int(uid_str)] = datetime.fromisoformat(ts)
+    for uid_str, charges in raw.get("stack_vow_charges", {}).items():
+        stack_vow_charges[int(uid_str)] = {
+            "kill": [datetime.fromisoformat(t) for t in charges.get("kill", [])],
+            "save": [datetime.fromisoformat(t) for t in charges.get("save", [])],
+        }
+
+    print(f"[cooldowns] Loaded cooldowns for {len(raw.get('last_kill_used', {}))} users.")
+
+
+def save_cooldowns():
+    def dt(d):
+        return {str(k): v.isoformat() for k, v in d.items()}
+
+    data = {
+        "last_kill_used": dt(last_kill_used),
+        "last_save_used": dt(last_save_used),
+        "miracle_counts": {str(k): v for k, v in miracle_counts.items()},
+        "miracle_gain_cooldown": dt(miracle_gain_cooldown),
+        "ragebait_last_used": dt(ragebait_last_used),
+        "ragebait_kill_cd_added": {str(k): v for k, v in ragebait_kill_cd_added.items()},
+        "random_vow_cds": {str(k): v for k, v in random_vow_cds.items()},
+        "vote_timestamps": dt(vote_timestamps),
+        "stack_vow_charges": {
+            str(uid): {
+                "kill": [t.isoformat() for t in charges["kill"]],
+                "save": [t.isoformat() for t in charges["save"]],
+            }
+            for uid, charges in stack_vow_charges.items()
+        },
+    }
+    try:
+        with open(COOLDOWNS_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"[cooldowns] Failed to save cooldowns.json: {e}")
+
+
+# =========================
 # BINDING VOW SYSTEM
 # =========================
 
@@ -687,9 +757,18 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
 async def on_ready():
     global server_settings
     server_settings = load_server_settings()
+    load_cooldowns()
     print(f"Logged in as {bot.user}")
     print("Slash commands are registered globally. Use !sync to push any changes to Discord.")
+    bot.loop.create_task(periodic_save())
     await start_webhook_server()
+
+
+async def periodic_save():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        save_cooldowns()
+        await asyncio.sleep(60)
 
 
 @bot.command(name="sync")
@@ -894,6 +973,7 @@ async def handle_dbl_webhook(request: web.Request) -> web.Response:
     except ValueError:
         return web.Response(status=400, text="Invalid user ID")
     vote_timestamps[user_id] = datetime.utcnow()
+    save_cooldowns()
     print(f"[vote] Recorded vote for user {user_id}")
     try:
         user = await bot.fetch_user(user_id)
@@ -1054,6 +1134,8 @@ async def on_message(message):
                 set_random_vow_cd(attacker.id, "kill")
             if defender_vow == "Random Vow":
                 set_random_vow_cd(defender.id, "kill")
+
+            save_cooldowns()
 
             clash_gif = pick_clash_gif(attacker_roles, defender_roles)
             await message.channel.send(clash_gif)
@@ -1280,6 +1362,7 @@ async def on_message(message):
                             return
                         new_count = add_miracle(member_to_timeout.id)
                         record_miracle_gain_from_failed_timeout(member_to_timeout.id)
+                        save_cooldowns()
                         if new_count == -1:
                             await message.channel.send(
                                 f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: {str(remaining).split('.')[0]}\n"
@@ -1300,11 +1383,8 @@ async def on_message(message):
 
         if action == "kill":
             last_kill_used[user_id] = now
+            save_cooldowns()
         # Save CD stamped only on successful save below
-
-    # Also check miracle for attacker vows on CD (Stack, Random, Miracle vows on CD trying to guh Miracle Vow target)
-    # This is handled above for standard vow. For Stack/Random/Miracle we need to check before returning on CD.
-    # The CD checks for Stack/Random/Miracle vows return early above, so we add miracle checks there:
 
     # =========================
     # SAVE GIF
@@ -1335,6 +1415,7 @@ async def on_message(message):
                     last_save_used[user_id] = now
                 elif vow != "Stack Vow":
                     last_save_used[user_id] = now
+                save_cooldowns()
                 await message.channel.send(
                     f"{member_to_timeout.mention} has been freed early by "
                     f"{message.author.mention}{vow_str}"
@@ -1342,6 +1423,7 @@ async def on_message(message):
                 # Miracle Vow saver gains a miracle
                 if vow == "Miracle Vow":
                     new_count = add_miracle(user_id)
+                    save_cooldowns()
                     if new_count == -1:
                         await message.channel.send(f"{message.author.mention} is already at max miracles ({MIRACLE_MAX}/{MIRACLE_MAX})!")
                     else:
@@ -1350,6 +1432,7 @@ async def on_message(message):
                 saved_vow = get_active_vow(saved_roles)
                 if saved_vow == "Miracle Vow":
                     new_count = add_miracle(member_to_timeout.id)
+                    save_cooldowns()
                     if new_count == -1:
                         await message.channel.send(f"{member_to_timeout.mention} is already at max miracles ({MIRACLE_MAX}/{MIRACLE_MAX})!")
                     else:
@@ -1388,6 +1471,7 @@ async def on_message(message):
             last_kill_used[member_to_timeout.id] = now
             ragebait_kill_cd_added[member_to_timeout.id] = target_base_cd + added_hours
             ragebait_last_used[user_id] = now
+            save_cooldowns()
             await message.channel.send(
                 f"{message.author.mention} [Ragebait Vow] raged at {member_to_timeout.mention}! "
                 f"Their kill CD has been extended by {added_hours:.2g}h."
@@ -1399,8 +1483,10 @@ async def on_message(message):
 
         if vow == "Random Vow":
             last_kill_used[user_id] = now
+            save_cooldowns()
         elif vow == "Miracle Vow":
             last_kill_used[user_id] = now
+            save_cooldowns()
 
         attacker = message.author
         defender = member_to_timeout
@@ -1414,6 +1500,7 @@ async def on_message(message):
             miracles = get_miracle_count(defender.id)
             if miracles >= MIRACLE_BLOCK_COST:
                 consume_miracles(defender.id, MIRACLE_BLOCK_COST)
+                save_cooldowns()
                 await message.channel.send(
                     f"{MIRACLE_BLOCK_GIF}\n"
                     f"\u2728 {defender.mention}'s miracle blocked the guh! {MIRACLE_BLOCK_COST} miracles consumed. They now have **{get_miracle_count(defender.id)}/{MIRACLE_MAX}** miracles."
@@ -1426,6 +1513,7 @@ async def on_message(message):
                         user_data["kill"].pop()
                 elif vow != "Miracle Vow":
                     last_kill_used.pop(user_id, None)
+                save_cooldowns()
                 await bot.process_commands(message)
                 return
 
@@ -1439,6 +1527,7 @@ async def on_message(message):
                     elif attacker_vow == "Random Vow":
                         actual_duration = roll_random_vow_timeout()
                         set_random_vow_cd(user_id, "kill")
+                        save_cooldowns()
                     else:
                         actual_duration = timeout_duration
                     try:

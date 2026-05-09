@@ -1099,68 +1099,18 @@ async def finalize_clash(clash_id: int):
                     await log_error(channel.guild, f"hakari loss: timeout {attacker}", e)
             return
 
-        # --- 1v1 clash: just attacker vs original target ---
+        # --- Direct timeout: no one joined ---
         if len(participants) == 2:
-            attacker_roles = [r.name for r in attacker.roles]
-            defender = participants[1]
-            d_roles = [r.name for r in defender.roles]
-            d_vow = get_active_vow(d_roles)
-            attacker_tickets = get_clash_tickets(attacker_roles)
-            defender_tickets = get_clash_tickets(d_roles)
-
-            all_roles_list = [attacker_roles, d_roles]
-            await channel.send(pick_clash_gif(all_roles_list))
-            if any_gmm(all_roles_list):
-                await channel.send("can't clash with someone that strong buddy")
-            await asyncio.sleep(3)
-
-            last_kill_used[defender.id] = datetime.utcnow()
-            save_cooldowns()
-
-            attacker_wins = resolve_clash(attacker_tickets, defender_tickets)
-            winner = attacker if attacker_wins else defender
-            loser = defender if attacker_wins else attacker
-
-            # Override duration if the winner's vow changes things
-            if not attacker_wins and d_vow == "Miracle Vow":
-                actual_duration = 30
-            elif not attacker_wins and d_vow == "Random Vow":
-                actual_duration = roll_random_vow_timeout()
-                set_random_vow_cd(defender.id, "kill")
-                save_cooldowns()
-
-            if attacker_wins and attacker_vow == "Hakari Vow":
-                if random.random() < 0.50:
-                    try:
-                        await defender.timeout(discord.utils.utcnow() + timedelta(seconds=251))
-                        await channel.send(f"\U0001f3b0 **JACKPOT! (clash)** {defender.mention} muted for 4m11s by {attacker.mention} [Hakari Vow]")
-                    except Exception as e:
-                        await log_error(channel.guild, f"hakari clash win: timeout {defender}", e)
-                else:
-                    try:
-                        await attacker.timeout(discord.utils.utcnow() + timedelta(seconds=90))
-                        await channel.send(f"\U0001f480 {attacker.mention} [Hakari Vow] won the clash but lost the gamble — muted 90s lmaooo")
-                    except Exception as e:
-                        await log_error(channel.guild, f"hakari clash loss self: timeout {attacker}", e)
-            elif not attacker_wins and d_vow == "Hakari Vow":
-                if random.random() < 0.50:
-                    try:
-                        await attacker.timeout(discord.utils.utcnow() + timedelta(seconds=251))
-                        await channel.send(f"\U0001f3b0 **JACKPOT! (clash)** {attacker.mention} muted for 4m11s by {defender.mention} [Hakari Vow]")
-                    except Exception as e:
-                        await log_error(channel.guild, f"hakari clash win: timeout {attacker}", e)
-                else:
-                    try:
-                        await defender.timeout(discord.utils.utcnow() + timedelta(seconds=90))
-                        await channel.send(f"\U0001f480 {defender.mention} [Hakari Vow] won the clash but lost the gamble — muted 90s lmaooo")
-                    except Exception as e:
-                        await log_error(channel.guild, f"hakari clash loss self: timeout {defender}", e)
-            else:
-                try:
-                    await loser.timeout(discord.utils.utcnow() + timedelta(seconds=actual_duration))
-                    await channel.send(f"{winner.mention} WON\n{loser.mention} get timed out")
-                except Exception as e:
-                    await log_error(channel.guild, f"clash timeout: {loser}", e)
+            original_target = participants[1]
+            try:
+                await original_target.timeout(discord.utils.utcnow() + timedelta(seconds=actual_duration))
+                await channel.send(
+                    f"{original_target.mention} has been timed out for {actual_duration}s by "
+                    f"{attacker.mention}{vow_str} lmao"
+                )
+            except Exception as e:
+                await log_error(channel.guild, f"timeout: {original_target}", e)
+            return
 
         # --- Multi-way clash (3–10 people) ---
         else:
@@ -1610,3 +1560,4 @@ async def on_command_error(ctx, error):
 
 
 bot.run(os.getenv("TOKEN"))
+

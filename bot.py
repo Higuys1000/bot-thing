@@ -345,9 +345,8 @@ BINDING_VOWS = {
 STACK_VOW_MULTIPLIER = 2.0
 STACK_VOW_MAX_CHARGES = 3
 stack_vow_charges: dict[int, dict[str, list[datetime]]] = {}
-bot_start_time: datetime = datetime.utcnow()
 # Track which users have been initialized post-restart for Stack Vow
-stack_vow_initialized: set[int] = set()
+
 
 MIRACLE_MAX = 6
 MIRACLE_BLOCK_COST = 2
@@ -399,13 +398,6 @@ def format_vow_label(vow_name: str | None) -> str:
 
 def _get_active_charge_timestamps(user_id: int, action: str, cd_hours: float, now: datetime) -> list[datetime]:
     user_data = stack_vow_charges.setdefault(user_id, {"kill": [], "save": []})
-    # On first access after a restart, pre-consume 2 charges so user starts with 1
-    init_key = f"{user_id}_{action}"
-    if init_key not in stack_vow_initialized:
-        stack_vow_initialized.add(init_key)
-        if len(user_data[action]) == 0:
-            # Pre-consume 2 charges using timestamps that won't expire for a full CD period
-            user_data[action] = [now, now]
     regen_window = timedelta(hours=cd_hours)
     active = [t for t in user_data[action] if now - t < regen_window]
     user_data[action] = active
@@ -762,6 +754,15 @@ async def on_ready():
     global server_settings
     server_settings = load_server_settings()
     load_cooldowns()
+    for guild in bot.guilds:
+    bum_role = discord.utils.get(guild.roles, name="Bum")
+    if bum_role:
+        if guild.id not in server_settings:
+            server_settings[guild.id] = {}
+        if "default_role_id" not in server_settings[guild.id]:
+            server_settings[guild.id]["default_role_id"] = bum_role.id
+            print(f"[setup] Auto-set default role to Bum in {guild.name}")
+    save_server_settings()
     print(f"Logged in as {bot.user}")
     print("Slash commands are registered globally. Use !sync to push any changes to Discord.")
     bot.loop.create_task(periodic_save())

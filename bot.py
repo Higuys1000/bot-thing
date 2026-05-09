@@ -17,7 +17,7 @@ intents.members = True
 intents.reactions = True
  
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
-
+ 
 TARGET_GIFS = [
     "https://tenor.com/view/jujutsu-kaisen-inumaki-toge-toge-inumaki-inumaki-toge-gif-2839387565091272519",
     "https://klipy.com/gifs/drmanhattan-watchman",

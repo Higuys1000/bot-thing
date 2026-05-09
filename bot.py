@@ -228,40 +228,46 @@ def get_default_role(guild_id: int) -> int | None:
 
 COOLDOWNS_FILE = "cooldowns.json"
 
+from upstash_redis import Redis
+
+redis = Redis(
+    url=os.getenv("UPSTASH_REDIS_REST_URL"),
+    token=os.getenv("UPSTASH_REDIS_REST_TOKEN")
+)
 
 def load_cooldowns():
-    if not os.path.exists(COOLDOWNS_FILE):
-        return
     try:
-        with open(COOLDOWNS_FILE, "r") as f:
-            raw = json.load(f)
+        raw = redis.get("cooldowns")
+        if not raw:
+            print("[cooldowns] No saved cooldowns found in Redis.")
+            return
+        data = json.loads(raw)
     except Exception as e:
-        print(f"[cooldowns] Failed to load cooldowns.json: {e}")
+        print(f"[cooldowns] Failed to load from Redis: {e}")
         return
 
-    for uid_str, ts in raw.get("last_kill_used", {}).items():
+    for uid_str, ts in data.get("last_kill_used", {}).items():
         last_kill_used[int(uid_str)] = datetime.fromisoformat(ts)
-    for uid_str, ts in raw.get("last_save_used", {}).items():
+    for uid_str, ts in data.get("last_save_used", {}).items():
         last_save_used[int(uid_str)] = datetime.fromisoformat(ts)
-    for uid_str, count in raw.get("miracle_counts", {}).items():
+    for uid_str, count in data.get("miracle_counts", {}).items():
         miracle_counts[int(uid_str)] = count
-    for uid_str, ts in raw.get("miracle_gain_cooldown", {}).items():
+    for uid_str, ts in data.get("miracle_gain_cooldown", {}).items():
         miracle_gain_cooldown[int(uid_str)] = datetime.fromisoformat(ts)
-    for uid_str, ts in raw.get("ragebait_last_used", {}).items():
+    for uid_str, ts in data.get("ragebait_last_used", {}).items():
         ragebait_last_used[int(uid_str)] = datetime.fromisoformat(ts)
-    for uid_str, added in raw.get("ragebait_kill_cd_added", {}).items():
+    for uid_str, added in data.get("ragebait_kill_cd_added", {}).items():
         ragebait_kill_cd_added[int(uid_str)] = added
-    for uid_str, cds in raw.get("random_vow_cds", {}).items():
+    for uid_str, cds in data.get("random_vow_cds", {}).items():
         random_vow_cds[int(uid_str)] = cds
-    for uid_str, ts in raw.get("vote_timestamps", {}).items():
+    for uid_str, ts in data.get("vote_timestamps", {}).items():
         vote_timestamps[int(uid_str)] = datetime.fromisoformat(ts)
-    for uid_str, charges in raw.get("stack_vow_charges", {}).items():
+    for uid_str, charges in data.get("stack_vow_charges", {}).items():
         stack_vow_charges[int(uid_str)] = {
             "kill": [datetime.fromisoformat(t) for t in charges.get("kill", [])],
             "save": [datetime.fromisoformat(t) for t in charges.get("save", [])],
         }
-
-    print(f"[cooldowns] Loaded cooldowns for {len(raw.get('last_kill_used', {}))} users.")
+    print(f"[cooldowns] Loaded cooldowns for {len(data.get('last_kill_used', {}))} users.")
 
 
 def save_cooldowns():
@@ -286,10 +292,9 @@ def save_cooldowns():
         },
     }
     try:
-        with open(COOLDOWNS_FILE, "w") as f:
-            json.dump(data, f, indent=2)
+        redis.set("cooldowns", json.dumps(data))
     except Exception as e:
-        print(f"[cooldowns] Failed to save cooldowns.json: {e}")
+        print(f"[cooldowns] Failed to save to Redis: {e}")
 
 
 # =========================

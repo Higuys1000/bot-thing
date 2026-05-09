@@ -755,13 +755,13 @@ async def on_ready():
     server_settings = load_server_settings()
     load_cooldowns()
     for guild in bot.guilds:
-    bum_role = discord.utils.get(guild.roles, name="Bum")
-    if bum_role:
-        if guild.id not in server_settings:
-            server_settings[guild.id] = {}
-        if "default_role_id" not in server_settings[guild.id]:
-            server_settings[guild.id]["default_role_id"] = bum_role.id
-            print(f"[setup] Auto-set default role to Bum in {guild.name}")
+       bum_role = discord.utils.get(guild.roles, name="Bum")
+       if bum_role:
+           if guild.id not in server_settings:
+               server_settings[guild.id] = {}
+           if "default_role_id" not in server_settings[guild.id]:
+               server_settings[guild.id]["default_role_id"] = bum_role.id
+               print(f"[setup] Auto-set default role to Bum in {guild.name}")
     save_server_settings()
     print(f"Logged in as {bot.user}")
     print("Slash commands are registered globally. Use !sync to push any changes to Discord.")

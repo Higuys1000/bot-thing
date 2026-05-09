@@ -864,8 +864,10 @@ async def slash_help(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="cooldown", description="Check your current kill and save cooldown status")
-async def slash_cooldown(interaction: discord.Interaction):
-    msg = build_cooldown_status(interaction.user, interaction.guild_id)
+@app_commands.describe(target="The user to check cooldowns for (leave blank to check yourself)")
+async def slash_cooldown(interaction: discord.Interaction, target: discord.Member = None):
+    member = target or interaction.user
+    msg = build_cooldown_status(member, interaction.guild_id)
     await interaction.response.send_message(msg)
 
 

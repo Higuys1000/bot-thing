@@ -68,7 +68,8 @@ TARGET_GIFS = [
     "https://tenor.com/view/megumi-reggie-star-max-elephant-jujutsu-kaisen-gif-17848841313289141645",
     "https://tenor.com/view/hazenoki-iori-iori-hazenoki-reggie-reggie-star-gif-15470925985641586022",
     "https://tenor.com/view/ryu-ishigori-kurourushi-and-uro-takako-gif-10500026154609357939",
-    "https://tenor.com/view/indian-meme-indian-guy-indian-meme-tuff-gif-17449687295227939133"
+    "https://tenor.com/view/indian-meme-indian-guy-indian-meme-tuff-gif-17449687295227939133",
+    "https://tenor.com/view/ryu-ryu-ishigori-yuta-yuta-okkotsu-jujutsu-kaisen-gif-8459438190665096786"
 ]
 
 UNTIMEOUT_GIFS = [
@@ -87,7 +88,6 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/lol-gif-23256631",
     "https://tenor.com/view/ohmmm-cartman-gif-10082733958201247483",
     "https://tenor.com/view/thumbs-up-gif-12921332806977950807",
-    "https://tenor.com/view/ryu-ryu-ishigori-yuta-yuta-okkotsu-jujutsu-kaisen-gif-8459438190665096786",
     "https://tenor.com/view/cat-cats-rigby-rigby-the-cat-rigby-cat-gif-12777307700590236451",
     "https://tenor.com/view/israel-israel-superhero-am-yisrael-chai-israeli-flag-gif-16069792012856888850",
     "https://tenor.com/view/american-gif-27543431",
@@ -248,6 +248,9 @@ BINDING_VOWS = {
 STACK_VOW_MULTIPLIER = 2.0
 STACK_VOW_MAX_CHARGES = 3
 stack_vow_charges: dict[int, dict[str, list[datetime]]] = {}
+bot_start_time: datetime = datetime.utcnow()
+# Track which users have been initialized post-restart for Stack Vow
+stack_vow_initialized: set[int] = set()
 
 MIRACLE_MAX = 6
 MIRACLE_BLOCK_COST = 2
@@ -299,6 +302,13 @@ def format_vow_label(vow_name: str | None) -> str:
 
 def _get_active_charge_timestamps(user_id: int, action: str, cd_hours: float, now: datetime) -> list[datetime]:
     user_data = stack_vow_charges.setdefault(user_id, {"kill": [], "save": []})
+    # On first access after a restart, pre-consume 2 charges so user starts with 1
+    init_key = f"{user_id}_{action}"
+    if init_key not in stack_vow_initialized:
+        stack_vow_initialized.add(init_key)
+        if len(user_data[action]) == 0:
+            # Pre-consume 2 charges using timestamps that won't expire for a full CD period
+            user_data[action] = [now, now]
     regen_window = timedelta(hours=cd_hours)
     active = [t for t in user_data[action] if now - t < regen_window]
     user_data[action] = active
@@ -423,6 +433,14 @@ def is_on_cooldown(user_id: int, action: str, effective_cd: float, now: datetime
     last = last_kill_used.get(user_id) if action == "kill" else last_save_used.get(user_id)
     if not last:
         return False
+    # If ragebait override exists for kill, use that CD instead
+    if action == "kill" and user_id in ragebait_kill_cd_added:
+        override_cd = ragebait_kill_cd_added[user_id]
+        elapsed = now - last
+        if elapsed >= timedelta(hours=override_cd):
+            del ragebait_kill_cd_added[user_id]  # expired, clear it
+            return now - last < timedelta(hours=effective_cd)
+        return True
     return now - last < timedelta(hours=effective_cd)
 
 
@@ -590,7 +608,7 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
         )
 
     if vow == "Bitchout Vow":
-        return f"{member.mention}, ({role_label} [Bitchout Vow]) you cannot kill or save anyone, but you're immune to guhs."
+        return f"{member.mention}, you're a bitch but a guh free bitch atleast"
 
     if vow == "Ragebait Vow":
         ragebait_cd = get_ragebait_cd(user_id, base_cd)
@@ -648,13 +666,6 @@ async def on_ready():
     server_settings = load_server_settings()
     print(f"Logged in as {bot.user}")
     print("Slash commands are registered globally. Use !sync to push any changes to Discord.")
-    # On startup, Stack Vow users begin with 1 charge each (pre-consume 2 of 3)
-    now = datetime.utcnow()
-    for action in ("kill", "save"):
-        for uid in list(stack_vow_charges.keys()):
-            user_data = stack_vow_charges[uid]
-            # Clear and set 2 consumed timestamps so only 1 charge is available
-            user_data[action] = [now, now]
     await start_webhook_server()
 
 
@@ -1347,14 +1358,10 @@ async def on_message(message):
             else:
                 target_base_cd = get_default_cooldown(message.guild.id)
             added_hours = target_base_cd * 1.5
-            # Extend their current kill CD by setting last_kill_used further back (or forward)
-            target_last_kill = last_kill_used.get(member_to_timeout.id)
-            if target_last_kill:
-                # Extend by pushing the stamp back so they appear to have used it later
-                last_kill_used[member_to_timeout.id] = target_last_kill + timedelta(hours=added_hours)
-            else:
-                # No existing CD — set their stamp to now and extend it
-                last_kill_used[member_to_timeout.id] = now + timedelta(hours=added_hours)
+            # Set their kill stamp to now — their CD will be 1.5x base from this point
+            # We store the override so the CD check uses 1.5x regardless of their normal CD
+            last_kill_used[member_to_timeout.id] = now
+            ragebait_kill_cd_added[member_to_timeout.id] = added_hours
             ragebait_last_used[user_id] = now
             await message.channel.send(
                 f"{message.author.mention} [Ragebait Vow] raged at {member_to_timeout.mention}! "

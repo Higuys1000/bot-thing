@@ -81,7 +81,8 @@ TARGET_GIFS = [
     "https://tenor.com/view/lebron-james-lebron-dunk-thunder-in-your-face-gif-15586712",
     "https://tenor.com/view/itadori-angry-jujutsu-kaisen-episode12-gif-19653132",
     "https://tenor.com/view/todo-jjk-jujutsu-kaisen-shibuya-arc-mahito-gif-11933159284027340768",
-    "https://tenor.com/view/d9luxe-gif-4267568862040013492"
+    "https://tenor.com/view/d9luxe-gif-4267568862040013492",
+    "https://tenor.com/view/kinblood-lebron-dunk-gif-12278440"
 ]
 
 UNTIMEOUT_GIFS = [

@@ -72,7 +72,16 @@ TARGET_GIFS = [
     "https://tenor.com/view/ryu-ryu-ishigori-yuta-yuta-okkotsu-jujutsu-kaisen-gif-8459438190665096786",
     "https://tenor.com/view/yuta-okkotsu-vs-kurourushi-it-recovers-gif-3802753654661782155",
     "https://tenor.com/view/jujutsu-kaisen-jjk-pseudo-geto-kills-mahito-gif-9807305680862769559",
-    "https://tenor.com/view/hakari-kinji-hakari-punch-jjk-hakari-hakari-mad-hakari-angry-gif-5937175376042208357"
+    "https://tenor.com/view/hakari-kinji-hakari-punch-jjk-hakari-hakari-mad-hakari-angry-gif-5937175376042208357",
+    "https://tenor.com/view/hasan-dog-hasan-piker-electrocuted-gif-2794498358389000074",
+    "https://tenor.com/view/reze-chainsaw-man-reze-arc-choking-rain-gif-12346418835128647519",
+    "https://tenor.com/view/gd-factory-clips-andre-drummond-andre-drummond-peace-sign-nba-nba-peace-sign-gif-13367487476147293282",
+    "https://tenor.com/view/kawhi-kawhi-leonard-kawhi-thunder-kawhi-lightning-kawhi-intuit-dome-gif-13900975799455910081",
+    "https://tenor.com/view/zeng-this-guy-right-here-this-right-here-point-out-point-gif-23913867",
+    "https://tenor.com/view/lebron-james-lebron-dunk-thunder-in-your-face-gif-15586712",
+    "https://tenor.com/view/itadori-angry-jujutsu-kaisen-episode12-gif-19653132",
+    "https://tenor.com/view/todo-jjk-jujutsu-kaisen-shibuya-arc-mahito-gif-11933159284027340768",
+    "https://tenor.com/view/d9luxe-gif-4267568862040013492"
 ]
 
 UNTIMEOUT_GIFS = [
@@ -97,7 +106,17 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/peter-griffin-gif-12194285640126683264",
     "https://tenor.com/view/yuta-okkotsu-vs-ryu-ishigori-apply-gif-48656283840648220",
     "https://tenor.com/view/big-brain-cell-gif-11009529955506497046",
-    "https://tenor.com/view/yourrage-chair-bounce-yourrage-bounce-yourrage-gif-6221615739239256499"
+    "https://tenor.com/view/yourrage-chair-bounce-yourrage-bounce-yourrage-gif-6221615739239256499",
+    "https://tenor.com/view/kirkified-kirk-charlie-kirk-jujutsu-kaisen-lobotomy-kaisen-gif-903841159067133314",
+    "https://tenor.com/view/virtual-god-bless-god-bless-god-bless-blessing-gif-11439379459411225580",
+    "https://tenor.com/view/yuta-yuta-okkotsu-rika-jujutsu-kaisen-yuta-jjk-gif-6106836881169266148",
+    "https://tenor.com/view/naoya-zenin-naoya-meme-gif-6148282862012625994",
+    "https://tenor.com/view/omni-man-sad-invincible-gif-9211102013467947727",
+    "https://tenor.com/view/mercy-overwatch-come-here-gif-14280244",
+    "https://tenor.com/view/lamelo-ball-lamelo-zesty-gif-3374658710119383750",
+    "https://tenor.com/view/storm-rain-raining-gif-12250202288703677838",
+    "https://tenor.com/view/death-of-the-self-gay-fluff-shigadeku-shigaraki-deku-gif-24033047",
+    "https://tenor.com/view/gay-anime-anime-gay-gif-18237425560170880188"
 ]
 
 CLASH_GIFS = [

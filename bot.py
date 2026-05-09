@@ -141,7 +141,7 @@ CLASH_WINDOW_SECONDS = 5
 TIMEOUT_SECONDS = 90
 
 ROLE_COOLDOWNS = {
-    "Bum": 18,
+    "Bum": 12,
     "Rat": 9,
     "Chud": 4,
     "Otis BFF \u2764\ufe0f": 4,

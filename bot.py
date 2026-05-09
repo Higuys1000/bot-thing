@@ -146,8 +146,7 @@ ROLE_COOLDOWNS = {
     "Chud": 4,
     "Otis BFF \u2764\ufe0f": 4,
     "Shit ass mod": 0,
-    "Good Moderator Morning!": 0,
-    "guh tester": 0
+    "Good Moderator Morning!": 0
 }
 
 CLASH_TICKETS = {

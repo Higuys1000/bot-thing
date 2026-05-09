@@ -763,6 +763,34 @@ async def sync_commands(ctx):
 # PREFIX COMMANDS
 # =========================
 
+@bot.command(name="resetcooldown")
+async def prefix_resetcooldown(ctx, target: discord.Member = None, which: str = "both"):
+    if not ctx.author.guild_permissions.manage_roles and not ctx.author.guild_permissions.manage_guild:
+        await ctx.send(f"{ctx.author.mention}, you need the Manage Roles permission to do that.")
+        return
+    if not target:
+        await ctx.send("Usage: `!resetcooldown @user [kill|save|both]`")
+        return
+    if which not in ("both", "kill", "save"):
+        await ctx.send("Invalid option. Use `kill`, `save`, or `both`.")
+        return
+    if which in ("both", "kill"):
+        last_kill_used.pop(target.id, None)
+        ragebait_kill_cd_added.pop(target.id, None)
+        if target.id in random_vow_cds:
+            random_vow_cds[target.id]["kill"] = None
+        if target.id in stack_vow_charges:
+            stack_vow_charges[target.id]["kill"] = []
+    if which in ("both", "save"):
+        last_save_used.pop(target.id, None)
+        if target.id in random_vow_cds:
+            random_vow_cds[target.id]["save"] = None
+        if target.id in stack_vow_charges:
+            stack_vow_charges[target.id]["save"] = []
+    save_cooldowns()
+    label = "kill and save cooldowns" if which == "both" else f"{which} cooldown"
+    await ctx.send(f"\u2705 Reset {label} for {target.mention}.")
+
 @bot.command(name="help")
 async def prefix_help(ctx):
     await ctx.send(embed=build_help_embed(ctx.guild.id))
@@ -842,6 +870,36 @@ async def slash_cooldown(interaction: discord.Interaction, target: discord.Membe
     msg = build_cooldown_status(member, interaction.guild_id)
     await interaction.response.send_message(msg)
 
+@bot.tree.command(name="resetcooldown", description="Reset a user's kill and/or save cooldown (mods only)")
+@app_commands.describe(
+    target="The user to reset cooldowns for",
+    which="Which cooldown to reset"
+)
+@app_commands.choices(which=[
+    app_commands.Choice(name="both", value="both"),
+    app_commands.Choice(name="kill", value="kill"),
+    app_commands.Choice(name="save", value="save"),
+])
+async def slash_resetcooldown(interaction: discord.Interaction, target: discord.Member, which: str = "both"):
+    if not interaction.user.guild_permissions.manage_roles and not interaction.user.guild_permissions.manage_guild:
+        await interaction.response.send_message("You need the Manage Roles permission to do that.", ephemeral=True)
+        return
+    if which in ("both", "kill"):
+        last_kill_used.pop(target.id, None)
+        ragebait_kill_cd_added.pop(target.id, None)
+        if target.id in random_vow_cds:
+            random_vow_cds[target.id]["kill"] = None
+        if target.id in stack_vow_charges:
+            stack_vow_charges[target.id]["kill"] = []
+    if which in ("both", "save"):
+        last_save_used.pop(target.id, None)
+        if target.id in random_vow_cds:
+            random_vow_cds[target.id]["save"] = None
+        if target.id in stack_vow_charges:
+            stack_vow_charges[target.id]["save"] = []
+    save_cooldowns()
+    label = "kill and save cooldowns" if which == "both" else f"{which} cooldown"
+    await interaction.response.send_message(f"\u2705 Reset {label} for {target.mention}.")
 
 @bot.tree.command(name="cooldowns", description="View or set the default cooldown for roleless users (mods only)")
 @app_commands.describe(hours="New default cooldown in hours (e.g. 6 or 0.5). Leave blank to view current value.")

@@ -69,7 +69,10 @@ TARGET_GIFS = [
     "https://tenor.com/view/hazenoki-iori-iori-hazenoki-reggie-reggie-star-gif-15470925985641586022",
     "https://tenor.com/view/ryu-ishigori-kurourushi-and-uro-takako-gif-10500026154609357939",
     "https://tenor.com/view/indian-meme-indian-guy-indian-meme-tuff-gif-17449687295227939133",
-    "https://tenor.com/view/ryu-ryu-ishigori-yuta-yuta-okkotsu-jujutsu-kaisen-gif-8459438190665096786"
+    "https://tenor.com/view/ryu-ryu-ishigori-yuta-yuta-okkotsu-jujutsu-kaisen-gif-8459438190665096786",
+    "https://tenor.com/view/yuta-okkotsu-vs-kurourushi-it-recovers-gif-3802753654661782155",
+    "https://tenor.com/view/jujutsu-kaisen-jjk-pseudo-geto-kills-mahito-gif-9807305680862769559",
+    "https://tenor.com/view/hakari-kinji-hakari-punch-jjk-hakari-hakari-mad-hakari-angry-gif-5937175376042208357"
 ]
 
 UNTIMEOUT_GIFS = [
@@ -1225,7 +1228,6 @@ async def on_message(message):
                     f"{message.author.mention}, [Ragebait Vow] save cooldown remaining: **{str(remaining).split('.')[0]}**"
                 )
                 return
-            last_save_used[user_id] = now
         vow_str = " [Ragebait Vow]"
 
     # =========================
@@ -1278,8 +1280,7 @@ async def on_message(message):
 
         if action == "kill":
             last_kill_used[user_id] = now
-        else:
-            last_save_used[user_id] = now
+        # Save CD stamped only on successful save below
 
     # Also check miracle for attacker vows on CD (Stack, Random, Miracle vows on CD trying to guh Miracle Vow target)
     # This is handled above for standard vow. For Stack/Random/Miracle we need to check before returning on CD.
@@ -1304,10 +1305,15 @@ async def on_message(message):
         if remaining.total_seconds() <= 90:
             try:
                 await member_to_timeout.timeout(None)
+                # Stamp save CD only on successful save
                 if vow == "Random Vow":
                     last_save_used[user_id] = now
                     set_random_vow_cd(user_id, "save")
                 elif vow == "Miracle Vow":
+                    last_save_used[user_id] = now
+                elif vow == "Ragebait Vow":
+                    last_save_used[user_id] = now
+                elif vow != "Stack Vow":
                     last_save_used[user_id] = now
                 await message.channel.send(
                     f"{member_to_timeout.mention} has been freed early by "
@@ -1357,11 +1363,10 @@ async def on_message(message):
                 target_base_cd = ROLE_COOLDOWNS[target_best]
             else:
                 target_base_cd = get_default_cooldown(message.guild.id)
-            added_hours = target_base_cd * 1.5
-            # Set their kill stamp to now — their CD will be 1.5x base from this point
-            # We store the override so the CD check uses 1.5x regardless of their normal CD
+            added_hours = target_base_cd * 0.5
+            # Stamp their kill CD as if they just used it, then add 0.5x base on top
             last_kill_used[member_to_timeout.id] = now
-            ragebait_kill_cd_added[member_to_timeout.id] = added_hours
+            ragebait_kill_cd_added[member_to_timeout.id] = target_base_cd + added_hours
             ragebait_last_used[user_id] = now
             await message.channel.send(
                 f"{message.author.mention} [Ragebait Vow] raged at {member_to_timeout.mention}! "

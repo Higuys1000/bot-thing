@@ -1,4 +1,4 @@
-import random
+ import random
 import discord
 import aiohttp
 from aiohttp import web
@@ -1028,7 +1028,10 @@ async def on_message(message):
         if default_role_id_for_mention is not None and not has_named_role_mention and not has_required_role_mention:
             required_role = message.guild.get_role(default_role_id_for_mention)
             role_name = required_role.name if required_role else "the required role"
-            await message.channel.send(f"{message.author.mention}, you can only use GIFs if you have the **{role_name}** role.")
+            await message.channel.send(
+            f"{message.author.mention}, you can only use GIFs if you have the **{role_name}** role. "
+            f"Subscribe to the Patreon for early access: https://www.patreon.com/15981390/join"
+            )
             return
         msg = build_cooldown_status(message.author, message.guild.id)
         await message.channel.send(msg)
@@ -1238,7 +1241,10 @@ async def on_message(message):
     if default_role_id is not None and not has_named_role and not has_required_role:
         required_role = message.guild.get_role(default_role_id)
         role_name = required_role.name if required_role else "the required role"
-        await message.channel.send(f"{message.author.mention}, you need the **{role_name}** role to use GIFs!")
+        await message.channel.send(
+        f"{message.author.mention}, you need the **{role_name}** role to use GIFs! "
+        f"Subscribe to the Patreon for early access: https://www.patreon.com/15981390/join"
+        )
         return
 
     if valid_roles:

@@ -15,9 +15,9 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.reactions = True
- 
+
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
- 
+
 TARGET_GIFS = [
     "https://tenor.com/view/jujutsu-kaisen-inumaki-toge-toge-inumaki-inumaki-toge-gif-2839387565091272519",
     "https://klipy.com/gifs/drmanhattan-watchman",
@@ -141,12 +141,12 @@ CLASH_WINDOW_SECONDS = 5
 TIMEOUT_SECONDS = 90
 
 ROLE_COOLDOWNS = {
-    "Bum": 12,
+    "Bum": 18,
     "Rat": 9,
     "Chud": 4,
     "Otis BFF \u2764\ufe0f": 4,
     "Shit ass mod": 0,
-    "Good Moderator Morning!": 0
+    "Good Moderator Morning!": 0,
 }
 
 CLASH_TICKETS = {
@@ -226,14 +226,13 @@ def get_default_role(guild_id: int) -> int | None:
 # COOLDOWN PERSISTENCE
 # =========================
 
-COOLDOWNS_FILE = "cooldowns.json"
-
 from upstash_redis import Redis
 
 redis = Redis(
     url=os.getenv("UPSTASH_REDIS_REST_URL"),
     token=os.getenv("UPSTASH_REDIS_REST_TOKEN")
 )
+
 
 def load_cooldowns():
     try:
@@ -345,25 +344,16 @@ BINDING_VOWS = {
 STACK_VOW_MULTIPLIER = 2.0
 STACK_VOW_MAX_CHARGES = 3
 stack_vow_charges: dict[int, dict[str, list[datetime]]] = {}
-# Track which users have been initialized post-restart for Stack Vow
-
 
 MIRACLE_MAX = 6
 MIRACLE_BLOCK_COST = 2
 miracle_counts: dict[int, int] = {}
 
-# { user_id: datetime } — last time a miracle was gained from a failed timeout
 miracle_gain_cooldown: dict[int, datetime] = {}
-
 MIRACLE_GAIN_COOLDOWN_HOURS = 1.0
 
-# { user_id: { "kill": float | None, "save": float | None } }
 random_vow_cds: dict[int, dict[str, float | None]] = {}
-
-# { user_id: datetime } — last time Ragebait ability was used
 ragebait_last_used: dict[int, datetime] = {}
-
-# { user_id: float } — current kill CD multiplier added by Ragebait (stacks as hours added)
 ragebait_kill_cd_added: dict[int, float] = {}
 
 
@@ -436,7 +426,6 @@ def add_miracle(user_id: int) -> int:
 
 
 def can_gain_miracle_from_failed_timeout(user_id: int) -> bool:
-    """Returns True if the user can gain a miracle from a failed timeout (1h cooldown)."""
     last = miracle_gain_cooldown.get(user_id)
     if not last:
         return True
@@ -453,7 +442,6 @@ def consume_miracles(user_id: int, amount: int):
 
 
 def get_ragebait_cd(user_id: int, base_cd: float) -> float:
-    """Returns the ragebait ability cooldown (0.5x role CD)."""
     return base_cd * 0.5
 
 
@@ -480,15 +468,12 @@ def set_random_vow_cd(user_id: int, action: str):
     if user_id not in random_vow_cds:
         random_vow_cds[user_id] = {"kill": None, "save": None}
     if action == "kill":
-        # 1-21h, weighted towards lower values
         random_vow_cds[user_id]["kill"] = random.triangular(1.0, 21.0, 3.0)
     else:
-        # 2-10h, weighted towards lower values
         random_vow_cds[user_id]["save"] = random.triangular(2.0, 10.0, 3.0)
 
 
 def roll_random_vow_timeout() -> int:
-    # 10s-8m (480s), weighted towards lower end
     return int(random.triangular(10, 480, 30))
 
 
@@ -516,31 +501,15 @@ def resolve_clash(attacker_tickets: int, defender_tickets: int) -> bool:
     return random.randint(1, total) <= attacker_tickets
 
 
-def is_on_cooldown(user_id: int, action: str, effective_cd: float, now: datetime) -> bool:
-    if effective_cd <= 0:
-        return False
-    last = last_kill_used.get(user_id) if action == "kill" else last_save_used.get(user_id)
-    if not last:
-        return False
-    # If ragebait override exists for kill, use that CD instead
-    if action == "kill" and user_id in ragebait_kill_cd_added:
-        override_cd = ragebait_kill_cd_added[user_id]
-        elapsed = now - last
-        if elapsed >= timedelta(hours=override_cd):
-            del ragebait_kill_cd_added[user_id]  # expired, clear it
-            return now - last < timedelta(hours=effective_cd)
-        return True
-    return now - last < timedelta(hours=effective_cd)
-
-
-def pick_clash_gif(attacker_roles: list[str], defender_roles: list[str]) -> str:
-    if "Good Moderator Morning!" in attacker_roles or "Good Moderator Morning!" in defender_roles:
-        return random.choice(CLASH_GIFS_GMM)
+def pick_clash_gif(all_roles: list[list[str]]) -> str:
+    for roles in all_roles:
+        if "Good Moderator Morning!" in roles:
+            return random.choice(CLASH_GIFS_GMM)
     return random.choice(CLASH_GIFS)
 
 
-def is_gmm_clash(attacker_roles: list[str], defender_roles: list[str]) -> bool:
-    return "Good Moderator Morning!" in attacker_roles or "Good Moderator Morning!" in defender_roles
+def any_gmm(all_roles: list[list[str]]) -> bool:
+    return any("Good Moderator Morning!" in roles for roles in all_roles)
 
 
 async def log_error(guild, label: str, error: Exception):
@@ -568,8 +537,8 @@ def build_help_embed(guild_id: int) -> discord.Embed:
         value=(
             "Reply to someone's message with a **kill GIF** to time them out (90s).\n"
             "Reply to a timed-out user's message with a **save GIF** to free them early.\n"
-            "If the target replies with a kill GIF within 5 seconds, a **Clash** happens \u2014 "
-            "whoever has more clash tickets wins."
+            "If anyone replies to the kill message with a kill GIF within 5 seconds, a **Clash** happens — "
+            "up to 10 fighters can join! The winner is picked by ticket weight, everyone else gets timed out."
         ),
         inline=False
     )
@@ -601,7 +570,7 @@ def build_help_embed(guild_id: int) -> discord.Embed:
         value=(
             "`/help` or `!help` \u2014 show this message\n"
             "`/vote` or `!vote` \u2014 get the vote link for a 25% cooldown discount\n"
-            "`/cooldown` or `@bot` \u2014 check your current cooldown status\n"
+            "`/cooldown [@user]` or `@bot` \u2014 check your (or someone else's) cooldown status\n"
             "`/cooldowns [hours]` or `!cooldowns [hours]` \u2014 view or set the default cooldown *(mods only)*\n"
             "`/setdefaultrole [@role]` or `!setdefaultrole [@role]` \u2014 set the role needed to use GIFs *(mods only)*\n"
             "`/setdefaultrole clear` or `!setdefaultrole clear` \u2014 remove the role requirement *(mods only)*"
@@ -754,17 +723,20 @@ async def on_ready():
     global server_settings
     server_settings = load_server_settings()
     load_cooldowns()
-    for guild in bot.guilds:
-       bum_role = discord.utils.get(guild.roles, name="Bum")
-       if bum_role:
-           if guild.id not in server_settings:
-               server_settings[guild.id] = {}
-           if "default_role_id" not in server_settings[guild.id]:
-               server_settings[guild.id]["default_role_id"] = bum_role.id
-               print(f"[setup] Auto-set default role to Bum in {guild.name}")
-    save_server_settings()
     print(f"Logged in as {bot.user}")
     print("Slash commands are registered globally. Use !sync to push any changes to Discord.")
+
+    # Auto-set default role to Bum if not already configured
+    for guild in bot.guilds:
+        bum_role = discord.utils.get(guild.roles, name="Bum")
+        if bum_role:
+            if guild.id not in server_settings:
+                server_settings[guild.id] = {}
+            if "default_role_id" not in server_settings[guild.id]:
+                server_settings[guild.id]["default_role_id"] = bum_role.id
+                print(f"[setup] Auto-set default role to Bum in {guild.name}")
+    save_server_settings()
+
     bot.loop.create_task(periodic_save())
     await start_webhook_server()
 
@@ -1010,6 +982,66 @@ async def start_webhook_server():
 
 
 # =========================
+# MULTI-WAY CLASH RESOLUTION
+# =========================
+
+async def resolve_multi_clash(message, attacker, defenders, attacker_vow, timeout_duration, vow_str, user_id):
+    """Handles resolution for clashes with 2+ defenders (3+ total participants)."""
+    attacker_roles_snap = [r.name for r in attacker.roles]
+    participants = [(attacker, get_clash_tickets(attacker_roles_snap))]
+    all_roles = [attacker_roles_snap]
+    for d in defenders:
+        d_roles = [r.name for r in d.roles]
+        participants.append((d, get_clash_tickets(d_roles)))
+        all_roles.append(d_roles)
+
+    await message.channel.send(pick_clash_gif(all_roles))
+    await message.channel.send(f"\u2694\ufe0f **{len(participants)}-WAY CLASH!**")
+
+    if any_gmm(all_roles):
+        await message.channel.send("can't clash with someone that strong buddy")
+
+    await asyncio.sleep(3)
+
+    # Determine timeout duration
+    if attacker_vow == "Miracle Vow":
+        actual_duration = 30
+    elif attacker_vow == "Random Vow":
+        actual_duration = roll_random_vow_timeout()
+        set_random_vow_cd(user_id, "kill")
+        save_cooldowns()
+    else:
+        actual_duration = timeout_duration
+
+    # Stamp kill CD for all defenders
+    now_snap = datetime.utcnow()
+    for d in defenders:
+        last_kill_used[d.id] = now_snap
+    save_cooldowns()
+
+    # Weighted random winner by ticket count
+    total_tickets = sum(t for _, t in participants)
+    roll = random.randint(1, total_tickets)
+    cumulative = 0
+    winner = None
+    for member, tickets in participants:
+        cumulative += tickets
+        if roll <= cumulative:
+            winner = member
+            break
+
+    losers = [m for m, _ in participants if m.id != winner.id]
+    await message.channel.send(f"\U0001f3c6 {winner.mention} WON the {len(participants)}-way clash!")
+
+    for loser in losers:
+        try:
+            await loser.timeout(discord.utils.utcnow() + timedelta(seconds=actual_duration))
+            await message.channel.send(f"{loser.mention} gets timed out!")
+        except Exception as e:
+            await log_error(message.guild, f"multi clash timeout: {loser}", e)
+
+
+# =========================
 # MESSAGE EVENT
 # =========================
 
@@ -1032,8 +1064,8 @@ async def on_message(message):
             required_role = message.guild.get_role(default_role_id_for_mention)
             role_name = required_role.name if required_role else "the required role"
             await message.channel.send(
-            f"{message.author.mention}, you can only use GIFs if you have the **{role_name}** role. "
-            f"Subscribe to the Patreon for early access: https://www.patreon.com/15981390/join"
+                f"{message.author.mention}, you can only use GIFs if you have the **{role_name}** role. "
+                f"Subscribe to the Patreon for early access: https://www.patreon.com/15981390/join"
             )
             return
         msg = build_cooldown_status(message.author, message.guild.id)
@@ -1049,172 +1081,25 @@ async def on_message(message):
     is_save_gif = any(gif in content for gif in UNTIMEOUT_GIFS)
 
     # =========================
-    # CLASH CHECK
+    # CLASH JOIN CHECK
     # =========================
     if is_kill_gif and message.reference.message_id in pending_clashes:
         clash_data = pending_clashes.get(message.reference.message_id)
-        if clash_data and message.author.id == clash_data["defender"].id:
-            defender = clash_data["defender"]
-            defender_roles = [r.name for r in defender.roles]
-            defender_vow = get_active_vow(defender_roles)
-            valid_defender_roles = [r for r in defender_roles if r in ROLE_COOLDOWNS]
-            default_cd = get_default_cooldown(message.guild.id)
-
-            if valid_defender_roles:
-                defender_best_role = min(valid_defender_roles, key=lambda r: ROLE_COOLDOWNS[r])
-                defender_base_cd = ROLE_COOLDOWNS[defender_best_role]
-            else:
-                defender_base_cd = default_cd
-
-            now = datetime.utcnow()
-
-            if defender_vow == "Stack Vow":
-                sv_cd = defender_base_cd * STACK_VOW_MULTIPLIER
-                defender_available = stack_vow_available_charges(defender.id, "kill", sv_cd, now)
-                defender_on_cd = defender_available == 0
-                defender_cd_penalized = False
-            elif defender_vow == "Random Vow":
-                rv_cd = get_random_vow_cd(defender.id, "kill")
-                last_kill = last_kill_used.get(defender.id)
-                if rv_cd is None or last_kill is None:
-                    defender_on_cd = False
-                    defender_cd_penalized = False
-                elif now - last_kill <= timedelta(seconds=CLASH_WINDOW_SECONDS + 1):
-                    defender_on_cd = False
-                    defender_cd_penalized = False
-                else:
-                    defender_on_cd = False  # can still clash but penalized
-                    defender_cd_penalized = now - last_kill < timedelta(hours=rv_cd)
-            elif defender_vow == "Bitchout Vow":
-                defender_on_cd = True
-                defender_cd_penalized = False
-            elif defender_vow == "Miracle Vow":
-                miracle_cd = apply_vote_discount(defender_base_cd * 2.5, defender.id)
-                last_kill = last_kill_used.get(defender.id)
-                if last_kill is None:
-                    defender_on_cd = False
-                    defender_cd_penalized = False
-                elif now - last_kill <= timedelta(seconds=CLASH_WINDOW_SECONDS + 1):
-                    defender_on_cd = False
-                    defender_cd_penalized = False
-                else:
-                    defender_on_cd = False
-                    defender_cd_penalized = now - last_kill < timedelta(hours=miracle_cd)
-            else:
-                effective_defender_cd = apply_vote_discount(apply_vow(defender_base_cd, "kill", defender_vow), defender.id)
-                if effective_defender_cd <= 0:
-                    defender_on_cd = False
-                    defender_cd_penalized = False
-                else:
-                    last_kill = last_kill_used.get(defender.id)
-                    if last_kill is None:
-                        defender_on_cd = False
-                        defender_cd_penalized = False
-                    elif now - last_kill <= timedelta(seconds=CLASH_WINDOW_SECONDS + 1):
-                        defender_on_cd = False
-                        defender_cd_penalized = False
-                    else:
-                        still_on_cd = now - last_kill < timedelta(hours=effective_defender_cd)
-                        defender_on_cd = False
-                        defender_cd_penalized = still_on_cd
-
-            if defender_on_cd:
-                await bot.process_commands(message)
-                return
-
-            pending_clashes.pop(message.reference.message_id, None)
-            clash_data["task"].cancel()
-
+        if clash_data:
+            current_defenders = clash_data["defenders"]
             attacker = clash_data["attacker"]
-            timeout_duration = clash_data["timeout_duration"]
-            attacker_vow = clash_data.get("attacker_vow")
-
-            attacker_roles = [r.name for r in attacker.roles]
-            attacker_tickets = get_clash_tickets(attacker_roles)
-            defender_tickets = get_clash_tickets(defender_roles)
-
-            # Apply penalty if defender was on CD (50% reduced win tickets)
-            if defender_cd_penalized:
-                defender_tickets = max(1, defender_tickets // 2)
-
-            # Stamp CD for both attacker and defender
-            last_kill_used[defender.id] = now
-            last_kill_used[attacker.id] = now
-            if attacker_vow == "Random Vow":
-                set_random_vow_cd(attacker.id, "kill")
-            if defender_vow == "Random Vow":
-                set_random_vow_cd(defender.id, "kill")
-
-            save_cooldowns()
-
-            clash_gif = pick_clash_gif(attacker_roles, defender_roles)
-            await message.channel.send(clash_gif)
-
-            gmm_clash = is_gmm_clash(attacker_roles, defender_roles)
-            if gmm_clash:
-                await message.channel.send("can't clash with someone that strong buddy")
-
-            attacker_wins = resolve_clash(attacker_tickets, defender_tickets)
-            loser = defender if attacker_wins else attacker
-            winner = attacker if attacker_wins else defender
-
-            await asyncio.sleep(3)
-
-            # If defender was on CD and wins, loser doesn't get timed out but CD resets
-            if defender_cd_penalized and not attacker_wins:
-                last_kill_used[loser.id] = now
-                await message.channel.send(f"{winner.mention} WON (on CD clash)\n{loser.mention} escapes timeout but CD resets")
-                await bot.process_commands(message)
-                return
-
-            if attacker_wins and attacker_vow == "Hakari Vow":
-                if random.random() < 0.50:
-                    try:
-                        await defender.timeout(discord.utils.utcnow() + timedelta(seconds=251))
-                        await message.channel.send(f"\U0001f3b0 **JACKPOT! (clash)** {defender.mention} muted for 4m11s by {attacker.mention} [Hakari Vow]")
-                    except Exception as e:
-                        await log_error(message.guild, f"hakari clash win: timeout {defender}", e)
-                else:
-                    try:
-                        await attacker.timeout(discord.utils.utcnow() + timedelta(seconds=90))
-                        await message.channel.send(f"\U0001f480 {attacker.mention} [Hakari Vow] won the clash but lost the gamble \u2014 muted 90s lmaooo")
-                    except Exception as e:
-                        await log_error(message.guild, f"hakari clash loss self: timeout {attacker}", e)
-            elif not attacker_wins and defender_vow == "Hakari Vow":
-                if random.random() < 0.50:
-                    try:
-                        await attacker.timeout(discord.utils.utcnow() + timedelta(seconds=251))
-                        await message.channel.send(f"\U0001f3b0 **JACKPOT! (clash)** {attacker.mention} muted for 4m11s by {defender.mention} [Hakari Vow]")
-                    except Exception as e:
-                        await log_error(message.guild, f"hakari clash win: timeout {attacker}", e)
-                else:
-                    try:
-                        await defender.timeout(discord.utils.utcnow() + timedelta(seconds=90))
-                        await message.channel.send(f"\U0001f480 {defender.mention} [Hakari Vow] won the clash but lost the gamble \u2014 muted 90s lmaooo")
-                    except Exception as e:
-                        await log_error(message.guild, f"hakari clash loss self: timeout {defender}", e)
-            else:
-                # Miracle Vow winner deals 30s; Random Vow winner deals random duration
-                if attacker_wins and attacker_vow == "Miracle Vow":
-                    actual_duration = 30
-                elif not attacker_wins and defender_vow == "Miracle Vow":
-                    actual_duration = 30
-                elif attacker_wins and attacker_vow == "Random Vow":
-                    actual_duration = roll_random_vow_timeout()
-                    set_random_vow_cd(attacker.id, "kill")
-                elif not attacker_wins and defender_vow == "Random Vow":
-                    actual_duration = roll_random_vow_timeout()
-                    set_random_vow_cd(defender.id, "kill")
-                else:
-                    actual_duration = timeout_duration
-                try:
-                    await loser.timeout(discord.utils.utcnow() + timedelta(seconds=actual_duration))
-                    await message.channel.send(f"{winner.mention} WON\n{loser.mention} get timed out")
-                except Exception as e:
-                    await log_error(message.guild, f"clash: timeout {loser}", e)
-
-            await bot.process_commands(message)
-            return
+            already_in = (
+                message.author.id == attacker.id or
+                message.author.id in [d.id for d in current_defenders]
+            )
+            if not already_in and len(current_defenders) < 9:  # cap: 9 defenders + 1 attacker = 10
+                new_member = message.guild.get_member(message.author.id)
+                if new_member:
+                    clash_data["defenders"].append(new_member)
+                    count = len(clash_data["defenders"]) + 1  # +1 for attacker
+                    await message.channel.send(f"{new_member.mention} joined the clash! \u2694\ufe0f {count} fighters now!")
+        await bot.process_commands(message)
+        return
 
     if not (is_kill_gif or is_save_gif):
         await bot.process_commands(message)
@@ -1245,8 +1130,8 @@ async def on_message(message):
         required_role = message.guild.get_role(default_role_id)
         role_name = required_role.name if required_role else "the required role"
         await message.channel.send(
-        f"{message.author.mention}, you need the **{role_name}** role to use GIFs! "
-        f"Subscribe to the Patreon for early access: https://www.patreon.com/15981390/join"
+            f"{message.author.mention}, you need the **{role_name}** role to use GIFs! "
+            f"Subscribe to the Patreon for early access: https://www.patreon.com/15981390/join"
         )
         return
 
@@ -1333,7 +1218,6 @@ async def on_message(message):
         vow_str = " [Miracle Vow]"
 
     elif vow == "Ragebait Vow":
-        # Save uses normal role CD; kill ability CD is checked inside the kill gif section
         if action == "save":
             save_cd = apply_vote_discount(base_cd, user_id)
             last = last_save_used.get(user_id)
@@ -1363,7 +1247,6 @@ async def on_message(message):
             if now - last < timedelta(hours=effective_cd):
                 remaining = timedelta(hours=effective_cd) - (now - last)
 
-                # Miracle Vow: ANY attacker on CD trying to guh a Miracle Vow person gets them a miracle
                 if is_kill_gif:
                     target_roles = [r.name for r in member_to_timeout.roles]
                     target_vow = get_active_vow(target_roles)
@@ -1397,7 +1280,6 @@ async def on_message(message):
         if action == "kill":
             last_kill_used[user_id] = now
             save_cooldowns()
-        # Save CD stamped only on successful save below
 
     # =========================
     # SAVE GIF
@@ -1418,7 +1300,6 @@ async def on_message(message):
         if remaining.total_seconds() <= 90:
             try:
                 await member_to_timeout.timeout(None)
-                # Stamp save CD only on successful save
                 if vow == "Random Vow":
                     last_save_used[user_id] = now
                     set_random_vow_cd(user_id, "save")
@@ -1433,7 +1314,6 @@ async def on_message(message):
                     f"{member_to_timeout.mention} has been freed early by "
                     f"{message.author.mention}{vow_str}"
                 )
-                # Miracle Vow saver gains a miracle
                 if vow == "Miracle Vow":
                     new_count = add_miracle(user_id)
                     save_cooldowns()
@@ -1462,16 +1342,14 @@ async def on_message(message):
     # KILL GIF
     # =========================
     if is_kill_gif:
-        # Ragebait Vow: instead of timing out, adds 1.5x to target's kill CD
+        # Ragebait Vow
         if vow == "Ragebait Vow":
-            ragebait_cd = get_ragebait_cd(user_id, base_cd)
             if is_ragebait_on_cd(user_id, base_cd, now):
                 remaining = get_ragebait_remaining(user_id, base_cd, now)
                 await message.channel.send(
                     f"{message.author.mention}, [Ragebait Vow] ability on cooldown: **{str(remaining).split('.')[0]}**"
                 )
                 return
-            # Apply 1.5x kill CD to target
             target_roles = [r.name for r in member_to_timeout.roles]
             target_valid_roles = [r for r in target_roles if r in ROLE_COOLDOWNS]
             if target_valid_roles:
@@ -1480,7 +1358,6 @@ async def on_message(message):
             else:
                 target_base_cd = get_default_cooldown(message.guild.id)
             added_hours = target_base_cd * 0.5
-            # Stamp their kill CD as if they just used it, then add 0.5x base on top
             last_kill_used[member_to_timeout.id] = now
             ragebait_kill_cd_added[member_to_timeout.id] = target_base_cd + added_hours
             ragebait_last_used[user_id] = now
@@ -1533,8 +1410,16 @@ async def on_message(message):
         async def clash_or_timeout():
             try:
                 await asyncio.sleep(CLASH_WINDOW_SECONDS)
-                if kill_message_id in pending_clashes:
-                    pending_clashes.pop(kill_message_id, None)
+                if kill_message_id not in pending_clashes:
+                    return
+                clash_data_snap = pending_clashes.pop(kill_message_id, None)
+                if not clash_data_snap:
+                    return
+
+                defenders = clash_data_snap["defenders"]
+
+                # No one clashed — normal timeout of original target
+                if len(defenders) == 0:
                     if attacker_vow == "Miracle Vow":
                         actual_duration = 30
                     elif attacker_vow == "Random Vow":
@@ -1550,19 +1435,105 @@ async def on_message(message):
                             f"by {attacker.mention}{vow_str} lmao"
                         )
                     except Exception as e:
-                        await message.channel.send(f"Failed to timeout {defender.mention}.")
-                        await log_error(message.guild, f"timeout: apply timeout to {defender}", e)
+                        await log_error(message.guild, f"timeout: {defender}", e)
+
+                # 1v1 clash
+                elif len(defenders) == 1:
+                    d = defenders[0]
+                    d_roles = [r.name for r in d.roles]
+                    d_vow = get_active_vow(d_roles)
+                    attacker_roles_snap = [r.name for r in attacker.roles]
+                    attacker_tickets = get_clash_tickets(attacker_roles_snap)
+                    defender_tickets = get_clash_tickets(d_roles)
+
+                    all_roles = [attacker_roles_snap, d_roles]
+                    await message.channel.send(pick_clash_gif(all_roles))
+                    if any_gmm(all_roles):
+                        await message.channel.send("can't clash with someone that strong buddy")
+                    await asyncio.sleep(3)
+
+                    last_kill_used[d.id] = datetime.utcnow()
+                    save_cooldowns()
+
+                    attacker_wins = resolve_clash(attacker_tickets, defender_tickets)
+                    winner = attacker if attacker_wins else d
+                    loser = d if attacker_wins else attacker
+
+                    # Determine actual duration based on winner's vow
+                    if attacker_wins and attacker_vow == "Miracle Vow":
+                        actual_duration = 30
+                    elif not attacker_wins and d_vow == "Miracle Vow":
+                        actual_duration = 30
+                    elif attacker_wins and attacker_vow == "Random Vow":
+                        actual_duration = roll_random_vow_timeout()
+                        set_random_vow_cd(attacker.id, "kill")
+                        save_cooldowns()
+                    elif not attacker_wins and d_vow == "Random Vow":
+                        actual_duration = roll_random_vow_timeout()
+                        set_random_vow_cd(d.id, "kill")
+                        save_cooldowns()
+                    else:
+                        actual_duration = timeout_duration
+
+                    # Hakari vow handling
+                    if attacker_wins and attacker_vow == "Hakari Vow":
+                        if random.random() < 0.50:
+                            try:
+                                await d.timeout(discord.utils.utcnow() + timedelta(seconds=251))
+                                await message.channel.send(f"\U0001f3b0 **JACKPOT! (clash)** {d.mention} muted for 4m11s by {attacker.mention} [Hakari Vow]")
+                            except Exception as e:
+                                await log_error(message.guild, f"hakari clash win: timeout {d}", e)
+                        else:
+                            try:
+                                await attacker.timeout(discord.utils.utcnow() + timedelta(seconds=90))
+                                await message.channel.send(f"\U0001f480 {attacker.mention} [Hakari Vow] won the clash but lost the gamble \u2014 muted 90s lmaooo")
+                            except Exception as e:
+                                await log_error(message.guild, f"hakari clash loss self: timeout {attacker}", e)
+                    elif not attacker_wins and d_vow == "Hakari Vow":
+                        if random.random() < 0.50:
+                            try:
+                                await attacker.timeout(discord.utils.utcnow() + timedelta(seconds=251))
+                                await message.channel.send(f"\U0001f3b0 **JACKPOT! (clash)** {attacker.mention} muted for 4m11s by {d.mention} [Hakari Vow]")
+                            except Exception as e:
+                                await log_error(message.guild, f"hakari clash win: timeout {attacker}", e)
+                        else:
+                            try:
+                                await d.timeout(discord.utils.utcnow() + timedelta(seconds=90))
+                                await message.channel.send(f"\U0001f480 {d.mention} [Hakari Vow] won the clash but lost the gamble \u2014 muted 90s lmaooo")
+                            except Exception as e:
+                                await log_error(message.guild, f"hakari clash loss self: timeout {d}", e)
+                    else:
+                        try:
+                            await loser.timeout(discord.utils.utcnow() + timedelta(seconds=actual_duration))
+                            await message.channel.send(f"{winner.mention} WON\n{loser.mention} get timed out")
+                        except Exception as e:
+                            await log_error(message.guild, f"clash timeout: {loser}", e)
+
+                # Multi-way clash (3–10 people)
+                else:
+                    await resolve_multi_clash(message, attacker, defenders, attacker_vow, timeout_duration, vow_str, user_id)
+
             except asyncio.CancelledError:
                 pass
             except Exception as e:
-                await log_error(message.guild, f"clash_or_timeout for {defender}", e)
+                await log_error(message.guild, f"clash_or_timeout", e)
 
         if vow == "Hakari Vow":
             async def hakari_or_timeout():
                 try:
                     await asyncio.sleep(CLASH_WINDOW_SECONDS)
-                    if kill_message_id in pending_clashes:
-                        pending_clashes.pop(kill_message_id, None)
+                    if kill_message_id not in pending_clashes:
+                        return
+                    clash_data_snap = pending_clashes.pop(kill_message_id, None)
+                    if not clash_data_snap:
+                        return
+                    defenders = clash_data_snap["defenders"]
+
+                    # If others joined, resolve as normal multi-clash
+                    if len(defenders) > 1:
+                        await resolve_multi_clash(message, attacker, defenders, attacker_vow, timeout_duration, vow_str, user_id)
+                    else:
+                        # Standard Hakari solo or 1v1
                         if random.random() < 0.36:
                             try:
                                 await defender.timeout(discord.utils.utcnow() + timedelta(seconds=251))
@@ -1591,7 +1562,7 @@ async def on_message(message):
 
         pending_clashes[kill_message_id] = {
             "attacker": attacker,
-            "defender": defender,
+            "defenders": [defender],
             "channel": message.channel,
             "timeout_duration": timeout_duration,
             "attacker_vow_str": vow_str,

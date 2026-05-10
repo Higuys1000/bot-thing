@@ -144,7 +144,7 @@ CLASH_WINDOW_SECONDS = 5
 TIMEOUT_SECONDS = 90
 
 # =========================
-# DEFAULT ROLE CONFIG (used as fallback if server hasn't run !setup)
+# DEFAULT ROLE CONFIG
 # =========================
 
 DEFAULT_ROLE_COOLDOWNS = {
@@ -165,22 +165,17 @@ DEFAULT_CLASH_TICKETS = {
     "Good Moderator Morning!": 999
 }
 
-# Special roles that always have 0 cooldown and override everything
-ALWAYS_ZERO_CD_ROLES = {"Good Moderator Morning!", "Shit ass mod"}
 GMM_ROLE = "Good Moderator Morning!"
 
 
 def get_role_cooldowns(guild_id: int) -> dict[str, float]:
-    """Returns {role_name: cd_hours} for the guild. Falls back to defaults if not configured."""
     raw = server_settings.get(guild_id, {}).get("role_cooldowns", None)
     if not raw:
         return DEFAULT_ROLE_COOLDOWNS
-    # stored as {role_name: [role_id, cd_hours]}
     return {name: data[1] for name, data in raw.items()}
 
 
 def get_clash_tickets_map(guild_id: int) -> dict[str, int]:
-    """Returns {role_name: tickets} for the guild. Falls back to defaults if not configured."""
     raw = server_settings.get(guild_id, {}).get("clash_tickets", None)
     if not raw:
         return DEFAULT_CLASH_TICKETS
@@ -188,7 +183,7 @@ def get_clash_tickets_map(guild_id: int) -> dict[str, int]:
 
 
 # =========================
-# PER-SERVER DEFAULT COOLDOWN
+# PER-SERVER SETTINGS
 # =========================
 
 SERVER_SETTINGS_FILE = "server_settings.json"
@@ -197,6 +192,7 @@ server_settings: dict[int, dict] = {}
 
 # =========================
 # VOTE SYSTEM
+# vote_timestamps stays global — a vote applies across all servers
 # =========================
 
 VOTE_WEBHOOK_PORT = int(os.getenv("PORT", os.getenv("VOTE_WEBHOOK_PORT", "5000")))
@@ -230,17 +226,35 @@ def apply_vote_discount(hours: float, user_id: int) -> float:
     return hours
 
 
-def load_server_settings():
-    if not os.path.exists(SERVER_SETTINGS_FILE):
-        return {}
-    with open(SERVER_SETTINGS_FILE, "r") as f:
-        raw = json.load(f)
-    return {int(k): v for k, v in raw.items()}
+def load_server_settings() -> dict:
+    # Try Redis first
+    try:
+        raw = redis.get("server_settings")
+        if raw:
+            data = json.loads(raw)
+            print("[server_settings] Loaded from Redis.")
+            return {int(k): v for k, v in data.items()}
+    except Exception as e:
+        print(f"[server_settings] Redis load failed: {e}")
+    # Fall back to local file
+    if os.path.exists(SERVER_SETTINGS_FILE):
+        with open(SERVER_SETTINGS_FILE, "r") as f:
+            raw = json.load(f)
+        return {int(k): v for k, v in raw.items()}
+    return {}
 
 
 def save_server_settings():
-    with open(SERVER_SETTINGS_FILE, "w") as f:
-        json.dump({str(k): v for k, v in server_settings.items()}, f, indent=2)
+    data = {str(k): v for k, v in server_settings.items()}
+    try:
+        redis.set("server_settings", json.dumps(data))
+    except Exception as e:
+        print(f"[server_settings] Redis save failed: {e}")
+    try:
+        with open(SERVER_SETTINGS_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"[server_settings] Local file save failed: {e}")
 
 
 def get_default_cooldown(guild_id: int) -> float:
@@ -253,6 +267,9 @@ def get_default_role(guild_id: int) -> int | None:
 
 # =========================
 # COOLDOWN PERSISTENCE (Redis)
+# Keys are "guild_id:user_id" strings for per-server separation.
+# vote_timestamps, miracle_counts, miracle_gain_cooldown, ragebait_last_used,
+# random_vow_cds, and stack_vow_charges are also keyed per-server.
 # =========================
 
 from upstash_redis import Redis
@@ -261,6 +278,27 @@ redis = Redis(
     url=os.getenv("UPSTASH_REDIS_REST_URL"),
     token=os.getenv("UPSTASH_REDIS_REST_TOKEN")
 )
+
+# All per-server cooldown dicts: key = (guild_id, user_id)
+last_kill_used: dict[tuple[int, int], datetime] = {}
+last_save_used: dict[tuple[int, int], datetime] = {}
+miracle_counts: dict[tuple[int, int], int] = {}
+miracle_gain_cooldown: dict[tuple[int, int], datetime] = {}
+ragebait_last_used: dict[tuple[int, int], datetime] = {}
+random_vow_cds: dict[tuple[int, int], dict[str, float | None]] = {}
+stack_vow_charges: dict[tuple[int, int], dict[str, list[datetime]]] = {}
+
+# vote_timestamps stays global (a vote applies everywhere)
+
+
+def _gk(guild_id: int, user_id: int) -> str:
+    """Encode a (guild_id, user_id) pair as a storable string key."""
+    return f"{guild_id}:{user_id}"
+
+
+def _parse_gk(key: str) -> tuple[int, int]:
+    g, u = key.split(":", 1)
+    return int(g), int(u)
 
 
 def load_cooldowns():
@@ -274,46 +312,46 @@ def load_cooldowns():
         print(f"[cooldowns] Failed to load from Redis: {e}")
         return
 
-    for uid_str, ts in data.get("last_kill_used", {}).items():
-        last_kill_used[int(uid_str)] = datetime.fromisoformat(ts)
-    for uid_str, ts in data.get("last_save_used", {}).items():
-        last_save_used[int(uid_str)] = datetime.fromisoformat(ts)
-    for uid_str, count in data.get("miracle_counts", {}).items():
-        miracle_counts[int(uid_str)] = count
-    for uid_str, ts in data.get("miracle_gain_cooldown", {}).items():
-        miracle_gain_cooldown[int(uid_str)] = datetime.fromisoformat(ts)
-    for uid_str, ts in data.get("ragebait_last_used", {}).items():
-        ragebait_last_used[int(uid_str)] = datetime.fromisoformat(ts)
-    for uid_str, cds in data.get("random_vow_cds", {}).items():
-        random_vow_cds[int(uid_str)] = cds
-    for uid_str, ts in data.get("vote_timestamps", {}).items():
-        vote_timestamps[int(uid_str)] = datetime.fromisoformat(ts)
-    for uid_str, charges in data.get("stack_vow_charges", {}).items():
-        stack_vow_charges[int(uid_str)] = {
+    for k, ts in data.get("last_kill_used", {}).items():
+        last_kill_used[_parse_gk(k)] = datetime.fromisoformat(ts)
+    for k, ts in data.get("last_save_used", {}).items():
+        last_save_used[_parse_gk(k)] = datetime.fromisoformat(ts)
+    for k, count in data.get("miracle_counts", {}).items():
+        miracle_counts[_parse_gk(k)] = count
+    for k, ts in data.get("miracle_gain_cooldown", {}).items():
+        miracle_gain_cooldown[_parse_gk(k)] = datetime.fromisoformat(ts)
+    for k, ts in data.get("ragebait_last_used", {}).items():
+        ragebait_last_used[_parse_gk(k)] = datetime.fromisoformat(ts)
+    for k, cds in data.get("random_vow_cds", {}).items():
+        random_vow_cds[_parse_gk(k)] = cds
+    for k, ts in data.get("vote_timestamps", {}).items():
+        vote_timestamps[int(k)] = datetime.fromisoformat(ts)
+    for k, charges in data.get("stack_vow_charges", {}).items():
+        stack_vow_charges[_parse_gk(k)] = {
             "kill": [datetime.fromisoformat(t) for t in charges.get("kill", [])],
             "save": [datetime.fromisoformat(t) for t in charges.get("save", [])],
         }
-    print(f"[cooldowns] Loaded cooldowns for {len(data.get('last_kill_used', {}))} users.")
+    print(f"[cooldowns] Loaded {len(data.get('last_kill_used', {}))} kill CD entries.")
 
 
 def save_cooldowns():
-    def dt(d):
-        return {str(k): v.isoformat() for k, v in d.items()}
+    def dt_gk(d):
+        return {_gk(*k): v.isoformat() for k, v in d.items()}
 
     data = {
-        "last_kill_used": dt(last_kill_used),
-        "last_save_used": dt(last_save_used),
-        "miracle_counts": {str(k): v for k, v in miracle_counts.items()},
-        "miracle_gain_cooldown": dt(miracle_gain_cooldown),
-        "ragebait_last_used": dt(ragebait_last_used),
-        "random_vow_cds": {str(k): v for k, v in random_vow_cds.items()},
-        "vote_timestamps": dt(vote_timestamps),
+        "last_kill_used": dt_gk(last_kill_used),
+        "last_save_used": dt_gk(last_save_used),
+        "miracle_counts": {_gk(*k): v for k, v in miracle_counts.items()},
+        "miracle_gain_cooldown": dt_gk(miracle_gain_cooldown),
+        "ragebait_last_used": dt_gk(ragebait_last_used),
+        "random_vow_cds": {_gk(*k): v for k, v in random_vow_cds.items()},
+        "vote_timestamps": {str(k): v.isoformat() for k, v in vote_timestamps.items()},
         "stack_vow_charges": {
-            str(uid): {
+            _gk(*k): {
                 "kill": [t.isoformat() for t in charges["kill"]],
                 "save": [t.isoformat() for t in charges["save"]],
             }
-            for uid, charges in stack_vow_charges.items()
+            for k, charges in stack_vow_charges.items()
         },
     }
     try:
@@ -369,17 +407,11 @@ BINDING_VOWS = {
 
 STACK_VOW_MULTIPLIER = 2.0
 STACK_VOW_MAX_CHARGES = 3
-stack_vow_charges: dict[int, dict[str, list[datetime]]] = {}
 
 MIRACLE_MAX = 6
 MIRACLE_BLOCK_COST = 2
-miracle_counts: dict[int, int] = {}
 
-miracle_gain_cooldown: dict[int, datetime] = {}
 MIRACLE_GAIN_COOLDOWN_HOURS = 1.0
-
-random_vow_cds: dict[int, dict[str, float | None]] = {}
-ragebait_last_used: dict[int, datetime] = {}
 RAGEBAIT_COOLDOWN_HOURS = 1.0
 
 
@@ -412,26 +444,32 @@ def format_vow_label(vow_name: str | None) -> str:
     return f" [{vow_name}]"
 
 
-def _get_active_charge_timestamps(user_id: int, action: str, cd_hours: float, now: datetime) -> list[datetime]:
-    user_data = stack_vow_charges.setdefault(user_id, {"kill": [], "save": []})
+# =========================
+# STACK VOW HELPERS  (guild_id, user_id) keyed
+# =========================
+
+def _get_active_charge_timestamps(guild_id: int, user_id: int, action: str, cd_hours: float, now: datetime) -> list[datetime]:
+    key = (guild_id, user_id)
+    user_data = stack_vow_charges.setdefault(key, {"kill": [], "save": []})
     regen_window = timedelta(hours=cd_hours)
     active = [t for t in user_data[action] if now - t < regen_window]
     user_data[action] = active
     return active
 
 
-def stack_vow_available_charges(user_id: int, action: str, cd_hours: float, now: datetime) -> int:
-    active = _get_active_charge_timestamps(user_id, action, cd_hours, now)
+def stack_vow_available_charges(guild_id: int, user_id: int, action: str, cd_hours: float, now: datetime) -> int:
+    active = _get_active_charge_timestamps(guild_id, user_id, action, cd_hours, now)
     return max(0, STACK_VOW_MAX_CHARGES - len(active))
 
 
-def stack_vow_consume_charge(user_id: int, action: str, now: datetime):
-    user_data = stack_vow_charges.setdefault(user_id, {"kill": [], "save": []})
+def stack_vow_consume_charge(guild_id: int, user_id: int, action: str, now: datetime):
+    key = (guild_id, user_id)
+    user_data = stack_vow_charges.setdefault(key, {"kill": [], "save": []})
     user_data[action].append(now)
 
 
-def stack_vow_next_regen(user_id: int, action: str, cd_hours: float, now: datetime) -> timedelta | None:
-    active = _get_active_charge_timestamps(user_id, action, cd_hours, now)
+def stack_vow_next_regen(guild_id: int, user_id: int, action: str, cd_hours: float, now: datetime) -> timedelta | None:
+    active = _get_active_charge_timestamps(guild_id, user_id, action, cd_hours, now)
     if not active:
         return None
     oldest = min(active)
@@ -439,59 +477,74 @@ def stack_vow_next_regen(user_id: int, action: str, cd_hours: float, now: dateti
     return max(timedelta(0), regen_at - now)
 
 
-def get_miracle_count(user_id: int) -> int:
-    return miracle_counts.get(user_id, 0)
+# =========================
+# MIRACLE HELPERS
+# =========================
+
+def get_miracle_count(guild_id: int, user_id: int) -> int:
+    return miracle_counts.get((guild_id, user_id), 0)
 
 
-def add_miracle(user_id: int) -> int:
-    current = miracle_counts.get(user_id, 0)
+def add_miracle(guild_id: int, user_id: int) -> int:
+    key = (guild_id, user_id)
+    current = miracle_counts.get(key, 0)
     if current >= MIRACLE_MAX:
         return -1
-    miracle_counts[user_id] = current + 1
-    return miracle_counts[user_id]
+    miracle_counts[key] = current + 1
+    return miracle_counts[key]
 
 
-def can_gain_miracle_from_failed_timeout(user_id: int) -> bool:
-    last = miracle_gain_cooldown.get(user_id)
+def can_gain_miracle_from_failed_timeout(guild_id: int, user_id: int) -> bool:
+    last = miracle_gain_cooldown.get((guild_id, user_id))
     if not last:
         return True
     return datetime.utcnow() - last >= timedelta(hours=MIRACLE_GAIN_COOLDOWN_HOURS)
 
 
-def record_miracle_gain_from_failed_timeout(user_id: int):
-    miracle_gain_cooldown[user_id] = datetime.utcnow()
+def record_miracle_gain_from_failed_timeout(guild_id: int, user_id: int):
+    miracle_gain_cooldown[(guild_id, user_id)] = datetime.utcnow()
 
 
-def consume_miracles(user_id: int, amount: int):
-    current = miracle_counts.get(user_id, 0)
-    miracle_counts[user_id] = max(0, current - amount)
+def consume_miracles(guild_id: int, user_id: int, amount: int):
+    key = (guild_id, user_id)
+    current = miracle_counts.get(key, 0)
+    miracle_counts[key] = max(0, current - amount)
 
 
-def is_ragebait_on_cd(user_id: int, now: datetime) -> bool:
-    last = ragebait_last_used.get(user_id)
+# =========================
+# RAGEBAIT HELPERS
+# =========================
+
+def is_ragebait_on_cd(guild_id: int, user_id: int, now: datetime) -> bool:
+    last = ragebait_last_used.get((guild_id, user_id))
     if not last:
         return False
     return now - last < timedelta(hours=RAGEBAIT_COOLDOWN_HOURS)
 
 
-def get_ragebait_remaining(user_id: int, now: datetime) -> timedelta:
-    last = ragebait_last_used.get(user_id)
+def get_ragebait_remaining(guild_id: int, user_id: int, now: datetime) -> timedelta:
+    last = ragebait_last_used.get((guild_id, user_id))
     if not last:
         return timedelta(0)
     return max(timedelta(0), timedelta(hours=RAGEBAIT_COOLDOWN_HOURS) - (now - last))
 
 
-def get_random_vow_cd(user_id: int, action: str) -> float | None:
-    return random_vow_cds.get(user_id, {}).get(action, None)
+# =========================
+# RANDOM VOW HELPERS
+# =========================
+
+def get_random_vow_cd(guild_id: int, user_id: int, action: str) -> float | None:
+    return random_vow_cds.get((guild_id, user_id), {}).get(action, None)
 
 
-def set_random_vow_cd(user_id: int, action: str):
-    if user_id not in random_vow_cds:
-        random_vow_cds[user_id] = {"kill": None, "save": None}
+def set_random_vow_cd(guild_id: int, user_id: int, action: str):
+    key = (guild_id, user_id)
+    if key not in random_vow_cds:
+        random_vow_cds[key] = {"kill": None, "save": None}
     if action == "kill":
-        random_vow_cds[user_id]["kill"] = random.triangular(1.0, 21.0, 3.0)
+        random_vow_cds[key]["kill"] = random.triangular(1.0, 21.0, 3.0)
     else:
-        random_vow_cds[user_id]["save"] = random.triangular(2.0, 10.0, 3.0)
+        random_vow_cds[key]["save"] = random.triangular(2.0, 10.0, 3.0)
 
 
 def roll_random_vow_timeout() -> int:
@@ -503,12 +556,8 @@ def roll_random_vow_timeout() -> int:
 # =========================
 
 MODLOG_CHANNEL = "modlog"
-last_kill_used: dict[int, datetime] = {}
-last_save_used: dict[int, datetime] = {}
 pending_clashes: dict[int, dict] = {}
 clash_head_lookup: dict[int, int] = {}
-
-# Active setup sessions: { user_id: guild_id }
 active_setup_sessions: dict[int, int] = {}
 
 
@@ -591,15 +640,12 @@ async def try_untimeout(member: discord.Member, channel: discord.TextChannel, la
 # =========================
 
 def build_setup_summary(guild_id: int) -> str:
-    """Returns a formatted string showing the current role config for a guild."""
     raw = server_settings.get(guild_id, {}).get("role_cooldowns", None)
     tickets_raw = server_settings.get(guild_id, {}).get("clash_tickets", None)
-
     if not raw:
         lines = [f"**{name}**: {cd}h CD, {DEFAULT_CLASH_TICKETS.get(name, 1)} tickets"
                  for name, cd in DEFAULT_ROLE_COOLDOWNS.items()]
         return "*(using defaults)*\n" + "\n".join(lines)
-
     lines = []
     for role_name, data in raw.items():
         role_id, cd = data
@@ -609,10 +655,6 @@ def build_setup_summary(guild_id: int) -> str:
 
 
 async def run_setup_session(ctx_or_interaction, guild: discord.Guild, user: discord.Member, channel):
-    """
-    Core setup logic shared by both !setup and /setup.
-    ctx_or_interaction is used only for the initial response.
-    """
     if user.id in active_setup_sessions:
         msg = "You already have an active setup session. Type `done` to finish it or `cancel` to abort."
         if isinstance(ctx_or_interaction, discord.Interaction):
@@ -670,27 +712,23 @@ async def run_setup_session(ctx_or_interaction, guild: discord.Guild, user: disc
                 active_setup_sessions.pop(user.id, None)
                 await channel.send("❌ No roles were added. Setup cancelled.")
                 return
-
             if guild.id not in server_settings:
                 server_settings[guild.id] = {}
             server_settings[guild.id]["role_cooldowns"] = new_cooldowns
             server_settings[guild.id]["clash_tickets"] = new_tickets
             save_server_settings()
             active_setup_sessions.pop(user.id, None)
-
             summary_lines = []
             for role_name, data in new_cooldowns.items():
                 role_id, cd = data
                 tickets = new_tickets.get(role_name, 1)
                 summary_lines.append(f"<@&{role_id}> ({role_name}): **{cd}h** CD, **{tickets}** tickets")
-
             await channel.send(
                 f"✅ **Setup complete!** Saved {len(new_cooldowns)} role(s):\n" +
                 "\n".join(summary_lines)
             )
             return
 
-        # Parse: @Role <hours> <tickets>
         if not msg.role_mentions:
             await channel.send(
                 "⚠️ Couldn't find a role mention. Make sure to @mention the role.\n"
@@ -713,7 +751,7 @@ async def run_setup_session(ctx_or_interaction, guild: discord.Guild, user: disc
             cd_hours = float(numbers[0])
             tickets = int(float(numbers[1]))
         except ValueError:
-            await channel.send("⚠️ Invalid numbers. Cooldown must be a number (e.g. `18` or `4.5`), tickets must be a whole number.")
+            await channel.send("⚠️ Invalid numbers. Cooldown must be a number, tickets must be a whole number.")
             continue
 
         if cd_hours < 0:
@@ -733,8 +771,143 @@ async def run_setup_session(ctx_or_interaction, guild: discord.Guild, user: disc
 
 
 # =========================
-# SHARED LOGIC
+# COOLDOWN STATUS
 # =========================
+
+def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
+    author_roles = [role.name for role in member.roles]
+    role_cooldowns = get_role_cooldowns(guild_id)
+    valid_roles = [r for r in author_roles if r in role_cooldowns]
+    default_cd = get_default_cooldown(guild_id)
+
+    if valid_roles:
+        best_role = min(valid_roles, key=lambda r: role_cooldowns[r])
+        base_cd = role_cooldowns[best_role]
+        role_label = best_role
+    else:
+        base_cd = default_cd
+        role_label = f"default ({default_cd}h)"
+
+    vow = get_active_vow(author_roles)
+    vow_str = format_vow_label(vow)
+    now = datetime.utcnow()
+    uid = member.id
+    gid = guild_id
+
+    if vow == "CONFLICT":
+        return (
+            f"{member.mention}, ⚠️ you have multiple Binding Vow roles — "
+            "vows are being ignored until this is resolved."
+        )
+
+    if base_cd == 0:
+        return f"{member.mention}, ({role_label}{vow_str}) you have no cooldown 😈"
+
+    if vow == "Stack Vow":
+        sv_cd = base_cd * STACK_VOW_MULTIPLIER
+
+        def charge_status(action: str) -> str:
+            available = stack_vow_available_charges(gid, uid, action, sv_cd, now)
+            next_regen = stack_vow_next_regen(gid, uid, action, sv_cd, now)
+            charge_pips = "🟢" * available + "🔴" * (STACK_VOW_MAX_CHARGES - available)
+            if next_regen:
+                return f"{charge_pips} (next regen in **{str(next_regen).split('.')[0]}**)"
+            return charge_pips
+
+        return (
+            f"{member.mention}, ({role_label} [Stack Vow]) CD: {sv_cd:.4g}h per charge\n"
+            f"☠️ Kill charges: {charge_status('kill')}\n"
+            f"💚 Save charges: {charge_status('save')}"
+        )
+
+    if vow == "Miracle Vow":
+        miracles = get_miracle_count(gid, uid)
+        kill_cd = apply_vote_discount(base_cd * 2.5, uid)
+        save_cd = apply_vote_discount(base_cd * 2.5, uid)
+        last_kill = last_kill_used.get((gid, uid))
+        last_save = last_save_used.get((gid, uid))
+
+        def format_cd_miracle(hours: float, last: datetime | None) -> str:
+            td = timedelta(hours=hours)
+            if not last or now - last >= td:
+                return "ready ✅"
+            remaining = td - (now - last)
+            return f"**{str(remaining).split('.')[0]}** remaining"
+
+        return (
+            f"{member.mention}, ({role_label} [Miracle Vow]) ✨ Miracles: {miracles}/{MIRACLE_MAX}\n"
+            f"☠️ Kill CD: {format_cd_miracle(kill_cd, last_kill)}\n"
+            f"💚 Save CD: {format_cd_miracle(save_cd, last_save)}"
+        )
+
+    if vow == "Random Vow":
+        kill_cd_val = get_random_vow_cd(gid, uid, "kill")
+        save_cd_val = get_random_vow_cd(gid, uid, "save")
+        last_kill = last_kill_used.get((gid, uid))
+        last_save = last_save_used.get((gid, uid))
+
+        def format_random_cd(cd_val: float | None, last: datetime | None) -> str:
+            if cd_val is None or not last:
+                return "ready ✅"
+            td = timedelta(hours=cd_val)
+            if now - last >= td:
+                return "ready ✅"
+            remaining = td - (now - last)
+            return f"**{str(remaining).split('.')[0]}** remaining (rolled {cd_val:.2f}h)"
+
+        return (
+            f"{member.mention}, ({role_label} [Random Vow])\n"
+            f"☠️ Kill CD: {format_random_cd(kill_cd_val, last_kill)}\n"
+            f"💚 Save CD: {format_random_cd(save_cd_val, last_save)}"
+        )
+
+    if vow == "Bitchout Vow":
+        return f"{member.mention}, you're a bitch but a guh free bitch atleast"
+
+    if vow == "Ragebait Vow":
+        save_cd = apply_vote_discount(base_cd, uid)
+        last_save = last_save_used.get((gid, uid))
+
+        def format_cd_simple(hours: float, last: datetime | None) -> str:
+            if not last or now - last >= timedelta(hours=hours):
+                return "ready ✅"
+            remaining = timedelta(hours=hours) - (now - last)
+            return f"**{str(remaining).split('.')[0]}** remaining"
+
+        ragebait_remaining = get_ragebait_remaining(gid, uid, now)
+        ragebait_status = "ready ✅" if ragebait_remaining.total_seconds() == 0 else f"**{str(ragebait_remaining).split('.')[0]}** remaining"
+        return (
+            f"{member.mention}, ({role_label} [Ragebait Vow])\n"
+            f"😡 Ragebait CD (1h): {ragebait_status}\n"
+            f"💚 Save CD ({base_cd}h): {format_cd_simple(save_cd, last_save)}"
+        )
+
+    kill_cd = apply_vote_discount(apply_vow(base_cd, "kill", vow), uid)
+    save_cd = apply_vote_discount(apply_vow(base_cd, "save", vow), uid)
+    last_kill = last_kill_used.get((gid, uid))
+    last_save = last_save_used.get((gid, uid))
+    voted = has_active_vote(uid)
+    vote_label = " 📥 25% off" if voted else ""
+
+    def format_cd(hours: float, last: datetime | None) -> str:
+        if hours == -1.0:
+            return "blocked 🚫"
+        if hours <= 0:
+            return "ready instantly ✅"
+        td = timedelta(hours=hours)
+        if not last or now - last >= td:
+            return "ready ✅"
+        remaining = td - (now - last)
+        return f"**{str(remaining).split('.')[0]}** remaining"
+
+    if kill_cd == save_cd and last_kill == last_save:
+        return f"{member.mention}, ({role_label}{vow_str}{vote_label}) cooldown: {format_cd(kill_cd, last_kill)}"
+    return (
+        f"{member.mention}, ({role_label}{vow_str}{vote_label})\n"
+        f"☠️ Kill CD: {format_cd(kill_cd, last_kill)}\n"
+        f"💚 Save CD: {format_cd(save_cd, last_save)}"
+    )
+
 
 def build_help_embed(guild_id: int) -> discord.Embed:
     default_cd = get_default_cooldown(guild_id)
@@ -746,8 +919,7 @@ def build_help_embed(guild_id: int) -> discord.Embed:
             "Reply to someone's message with a **kill GIF** to time them out (90s).\n"
             "Reply to a timed-out user's message with a **save GIF** to free them early.\n"
             "If anyone replies to the kill GIF chain with another kill GIF within 5 seconds, a **Clash** happens — "
-            "up to 10 fighters can join by replying to the latest GIF in the chain! Each joiner extends the window. "
-            "The winner is picked by ticket weight, everyone else gets timed out."
+            "up to 10 fighters can join! The winner is picked by ticket weight, everyone else gets timed out."
         ),
         inline=False
     )
@@ -757,7 +929,7 @@ def build_help_embed(guild_id: int) -> discord.Embed:
         value=(
             f"Default role to use GIFs: {default_role_str}\n"
             f"Default cooldown: **{default_cd}h**\n"
-            "*Role-specific cooldowns are configured via `/setup` or `!setup`.*"
+            "*Cooldowns are per-server. Role-specific cooldowns via `/setup` or `!setup`.*"
         ),
         inline=False
     )
@@ -784,146 +956,12 @@ def build_help_embed(guild_id: int) -> discord.Embed:
             "`/viewsetup` or `!viewsetup` — view current role config\n"
             "`/resetcooldown @user [kill|save|both]` — reset a user's cooldown *(mods only)*\n"
             "`/cooldowns [hours]` or `!cooldowns [hours]` — view or set the default cooldown *(mods only)*\n"
-            "`/setdefaultrole [@role]` or `!setdefaultrole [@role]` — set the role needed to use GIFs *(mods only)*\n"
+            "`/setdefaultrole [@role]` — set the role needed to use GIFs *(mods only)*\n"
             "`/cleardefaultrole` — remove the role requirement *(mods only)*"
         ),
         inline=False
     )
     return embed
-
-
-def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
-    author_roles = [role.name for role in member.roles]
-    role_cooldowns = get_role_cooldowns(guild_id)
-    valid_roles = [r for r in author_roles if r in role_cooldowns]
-    default_cd = get_default_cooldown(guild_id)
-
-    if valid_roles:
-        best_role = min(valid_roles, key=lambda r: role_cooldowns[r])
-        base_cd = role_cooldowns[best_role]
-        role_label = best_role
-    else:
-        base_cd = default_cd
-        role_label = f"default ({default_cd}h)"
-
-    vow = get_active_vow(author_roles)
-    vow_str = format_vow_label(vow)
-    now = datetime.utcnow()
-    user_id = member.id
-
-    if vow == "CONFLICT":
-        return (
-            f"{member.mention}, ⚠️ you have multiple Binding Vow roles — "
-            "vows are being ignored until this is resolved."
-        )
-
-    if base_cd == 0:
-        return f"{member.mention}, ({role_label}{vow_str}) you have no cooldown 😈"
-
-    if vow == "Stack Vow":
-        sv_cd = base_cd * STACK_VOW_MULTIPLIER
-
-        def charge_status(action: str) -> str:
-            available = stack_vow_available_charges(user_id, action, sv_cd, now)
-            next_regen = stack_vow_next_regen(user_id, action, sv_cd, now)
-            charge_pips = "🟢" * available + "🔴" * (STACK_VOW_MAX_CHARGES - available)
-            if next_regen:
-                return f"{charge_pips} (next regen in **{str(next_regen).split('.')[0]}**)"
-            return charge_pips
-
-        return (
-            f"{member.mention}, ({role_label} [Stack Vow]) CD: {sv_cd:.4g}h per charge\n"
-            f"☠️ Kill charges: {charge_status('kill')}\n"
-            f"💚 Save charges: {charge_status('save')}"
-        )
-
-    if vow == "Miracle Vow":
-        miracles = get_miracle_count(user_id)
-        kill_cd = apply_vote_discount(base_cd * 2.5, user_id)
-        save_cd = apply_vote_discount(base_cd * 2.5, user_id)
-        last_kill = last_kill_used.get(user_id)
-        last_save = last_save_used.get(user_id)
-
-        def format_cd_miracle(hours: float, last: datetime | None) -> str:
-            td = timedelta(hours=hours)
-            if not last or now - last >= td:
-                return "ready ✅"
-            remaining = td - (now - last)
-            return f"**{str(remaining).split('.')[0]}** remaining"
-
-        return (
-            f"{member.mention}, ({role_label} [Miracle Vow]) ✨ Miracles: {miracles}/{MIRACLE_MAX}\n"
-            f"☠️ Kill CD: {format_cd_miracle(kill_cd, last_kill)}\n"
-            f"💚 Save CD: {format_cd_miracle(save_cd, last_save)}"
-        )
-
-    if vow == "Random Vow":
-        kill_cd_val = get_random_vow_cd(user_id, "kill")
-        save_cd_val = get_random_vow_cd(user_id, "save")
-        last_kill = last_kill_used.get(user_id)
-        last_save = last_save_used.get(user_id)
-
-        def format_random_cd(cd_val: float | None, last: datetime | None) -> str:
-            if cd_val is None or not last:
-                return "ready ✅"
-            td = timedelta(hours=cd_val)
-            if now - last >= td:
-                return "ready ✅"
-            remaining = td - (now - last)
-            return f"**{str(remaining).split('.')[0]}** remaining (rolled {cd_val:.2f}h)"
-
-        return (
-            f"{member.mention}, ({role_label} [Random Vow])\n"
-            f"☠️ Kill CD: {format_random_cd(kill_cd_val, last_kill)}\n"
-            f"💚 Save CD: {format_random_cd(save_cd_val, last_save)}"
-        )
-
-    if vow == "Bitchout Vow":
-        return f"{member.mention}, you're a bitch but a guh free bitch atleast"
-
-    if vow == "Ragebait Vow":
-        save_cd = apply_vote_discount(base_cd, user_id)
-        last_save = last_save_used.get(user_id)
-
-        def format_cd_simple(hours: float, last: datetime | None) -> str:
-            if not last or now - last >= timedelta(hours=hours):
-                return "ready ✅"
-            remaining = timedelta(hours=hours) - (now - last)
-            return f"**{str(remaining).split('.')[0]}** remaining"
-
-        ragebait_remaining = get_ragebait_remaining(user_id, now)
-        ragebait_status = "ready ✅" if ragebait_remaining.total_seconds() == 0 else f"**{str(ragebait_remaining).split('.')[0]}** remaining"
-        return (
-            f"{member.mention}, ({role_label} [Ragebait Vow])\n"
-            f"😡 Ragebait CD (1h): {ragebait_status}\n"
-            f"💚 Save CD ({base_cd}h): {format_cd_simple(save_cd, last_save)}"
-        )
-
-    kill_cd = apply_vote_discount(apply_vow(base_cd, "kill", vow), user_id)
-    save_cd = apply_vote_discount(apply_vow(base_cd, "save", vow), user_id)
-    last_kill = last_kill_used.get(user_id)
-    last_save = last_save_used.get(user_id)
-    voted = has_active_vote(user_id)
-    vote_label = " 📥 25% off" if voted else ""
-
-    def format_cd(hours: float, last: datetime | None) -> str:
-        if hours == -1.0:
-            return "blocked 🚫"
-        if hours <= 0:
-            return "ready instantly ✅"
-        td = timedelta(hours=hours)
-        if not last or now - last >= td:
-            return "ready ✅"
-        remaining = td - (now - last)
-        return f"**{str(remaining).split('.')[0]}** remaining"
-
-    if kill_cd == save_cd and last_kill == last_save:
-        return f"{member.mention}, ({role_label}{vow_str}{vote_label}) cooldown: {format_cd(kill_cd, last_kill)}"
-    return (
-        f"{member.mention}, ({role_label}{vow_str}{vote_label})\n"
-        f"☠️ Kill CD: {format_cd(kill_cd, last_kill)}\n"
-        f"💚 Save CD: {format_cd(save_cd, last_save)}"
-    )
 
 
 # =========================
@@ -936,7 +974,6 @@ async def on_ready():
     server_settings = load_server_settings()
     load_cooldowns()
     print(f"Logged in as {bot.user}")
-    print("Slash commands are registered globally. Use !sync to push any changes to Discord.")
 
     for guild in bot.guilds:
         bum_role = discord.utils.get(guild.roles, name="Bum")
@@ -962,7 +999,7 @@ async def periodic_save():
 @bot.command(name="sync")
 @commands.is_owner()
 async def sync_commands(ctx):
-    await ctx.send("Syncing slash commands globally... this can take up to an hour to show everywhere.")
+    await ctx.send("Syncing slash commands globally...")
     try:
         synced = await bot.tree.sync()
         await ctx.send(f"✅ Synced {len(synced)} slash command(s) globally.")
@@ -1011,18 +1048,20 @@ async def prefix_resetcooldown(ctx, target: discord.Member = None, which: str = 
     if which not in ("both", "kill", "save"):
         await ctx.send("Invalid option. Use `kill`, `save`, or `both`.")
         return
+    gid = ctx.guild.id
+    uid = target.id
     if which in ("both", "kill"):
-        last_kill_used.pop(target.id, None)
-        if target.id in random_vow_cds:
-            random_vow_cds[target.id]["kill"] = None
-        if target.id in stack_vow_charges:
-            stack_vow_charges[target.id]["kill"] = []
+        last_kill_used.pop((gid, uid), None)
+        if (gid, uid) in random_vow_cds:
+            random_vow_cds[(gid, uid)]["kill"] = None
+        if (gid, uid) in stack_vow_charges:
+            stack_vow_charges[(gid, uid)]["kill"] = []
     if which in ("both", "save"):
-        last_save_used.pop(target.id, None)
-        if target.id in random_vow_cds:
-            random_vow_cds[target.id]["save"] = None
-        if target.id in stack_vow_charges:
-            stack_vow_charges[target.id]["save"] = []
+        last_save_used.pop((gid, uid), None)
+        if (gid, uid) in random_vow_cds:
+            random_vow_cds[(gid, uid)]["save"] = None
+        if (gid, uid) in stack_vow_charges:
+            stack_vow_charges[(gid, uid)]["save"] = []
     save_cooldowns()
     label = "kill and save cooldowns" if which == "both" else f"{which} cooldown"
     await ctx.send(f"✅ Reset {label} for {target.mention}.")
@@ -1042,13 +1081,13 @@ async def prefix_cooldowns(ctx, hours: str = None):
         if new_cd < 0:
             raise ValueError
     except ValueError:
-        await ctx.send("Invalid value. Must be a non-negative number (e.g. `!cooldowns 6` or `!cooldowns 0.5`)")
+        await ctx.send("Invalid value. Must be a non-negative number.")
         return
     if ctx.guild.id not in server_settings:
         server_settings[ctx.guild.id] = {}
     server_settings[ctx.guild.id]["default_cooldown"] = new_cd
     save_server_settings()
-    await ctx.send(f"✅ Default cooldown for roleless users set to **{new_cd}h**")
+    await ctx.send(f"✅ Default cooldown set to **{new_cd}h**")
 
 
 @bot.command(name="setdefaultrole")
@@ -1058,48 +1097,39 @@ async def prefix_setdefaultrole(ctx, *, role_input: str = None):
         return
     if not role_input:
         current_id = get_default_role(ctx.guild.id)
-        if current_id:
-            role = ctx.guild.get_role(current_id)
-            role_str = role.mention if role else f"unknown role (ID {current_id})"
-        else:
-            role_str = "none (everyone can use GIFs)"
+        role_str = ctx.guild.get_role(current_id).mention if current_id and ctx.guild.get_role(current_id) else "none (everyone)"
         await ctx.send(f"Current default GIF role: {role_str}\nUsage: `!setdefaultrole @Role` or `!setdefaultrole clear`")
         return
     if role_input.strip().lower() == "clear":
         if ctx.guild.id in server_settings:
             server_settings[ctx.guild.id].pop("default_role_id", None)
             save_server_settings()
-        await ctx.send("✅ Default role requirement cleared. Everyone can now use GIFs.")
+        await ctx.send("✅ Default role requirement cleared.")
         return
-    role = None
-    if ctx.message.role_mentions:
-        role = ctx.message.role_mentions[0]
-    else:
-        role = discord.utils.find(lambda r: r.name.lower() == role_input.lower(), ctx.guild.roles)
+    role = ctx.message.role_mentions[0] if ctx.message.role_mentions else discord.utils.find(lambda r: r.name.lower() == role_input.lower(), ctx.guild.roles)
     if not role:
-        await ctx.send("Couldn't find that role. Try mentioning it with @, or use `!setdefaultrole clear` to remove the requirement.")
+        await ctx.send("Couldn't find that role.")
         return
     if ctx.guild.id not in server_settings:
         server_settings[ctx.guild.id] = {}
     server_settings[ctx.guild.id]["default_role_id"] = role.id
     save_server_settings()
-    await ctx.send(f"✅ Default GIF role set to **{role.name}**. Only members with this role (or a configured cooldown role) can use GIFs.")
+    await ctx.send(f"✅ Default GIF role set to **{role.name}**.")
 
 
 # =========================
 # SLASH COMMANDS
 # =========================
 
-@bot.tree.command(name="help", description="Show how the bot works, all cooldowns, vows, and commands")
+@bot.tree.command(name="help", description="Show how the bot works")
 async def slash_help(interaction: discord.Interaction):
     await interaction.response.send_message(embed=build_help_embed(interaction.guild_id))
 
 
-@bot.tree.command(name="cooldown", description="Check your (or someone else's) kill and save cooldown status")
-@app_commands.describe(target="The user to check cooldowns for (leave blank to check yourself)")
+@bot.tree.command(name="cooldown", description="Check your (or someone else's) cooldown status")
+@app_commands.describe(target="The user to check (leave blank for yourself)")
 async def slash_cooldown(interaction: discord.Interaction, target: discord.Member = None):
     member = target or interaction.user
-    # Cast to Member so build_cooldown_status can access .roles
     if not isinstance(member, discord.Member):
         member = interaction.guild.get_member(member.id)
     if not member:
@@ -1109,7 +1139,7 @@ async def slash_cooldown(interaction: discord.Interaction, target: discord.Membe
     await interaction.response.send_message(msg)
 
 
-@bot.tree.command(name="setup", description="Configure role cooldowns and clash tickets for this server (mods only)")
+@bot.tree.command(name="setup", description="Configure role cooldowns and clash tickets (mods only)")
 async def slash_setup(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.manage_roles and not interaction.user.guild_permissions.manage_guild:
         await interaction.response.send_message("You need Manage Roles permission to run setup.", ephemeral=True)
@@ -1117,7 +1147,7 @@ async def slash_setup(interaction: discord.Interaction):
     await run_setup_session(interaction, interaction.guild, interaction.user, interaction.channel)
 
 
-@bot.tree.command(name="viewsetup", description="View the current role cooldown and clash ticket config for this server")
+@bot.tree.command(name="viewsetup", description="View the current role cooldown config for this server")
 async def slash_viewsetup(interaction: discord.Interaction):
     summary = build_setup_summary(interaction.guild_id)
     default_cd = get_default_cooldown(interaction.guild_id)
@@ -1130,8 +1160,8 @@ async def slash_viewsetup(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="resetcooldown", description="Reset a user's kill and/or save cooldown (mods only)")
-@app_commands.describe(target="The user to reset cooldowns for", which="Which cooldown to reset")
+@bot.tree.command(name="resetcooldown", description="Reset a user's cooldown (mods only)")
+@app_commands.describe(target="The user to reset", which="Which cooldown to reset")
 @app_commands.choices(which=[
     app_commands.Choice(name="both", value="both"),
     app_commands.Choice(name="kill", value="kill"),
@@ -1141,56 +1171,54 @@ async def slash_resetcooldown(interaction: discord.Interaction, target: discord.
     if not interaction.user.guild_permissions.manage_roles and not interaction.user.guild_permissions.manage_guild:
         await interaction.response.send_message("You need the Manage Roles permission to do that.", ephemeral=True)
         return
+    gid = interaction.guild_id
+    uid = target.id
     if which in ("both", "kill"):
-        last_kill_used.pop(target.id, None)
-        if target.id in random_vow_cds:
-            random_vow_cds[target.id]["kill"] = None
-        if target.id in stack_vow_charges:
-            stack_vow_charges[target.id]["kill"] = []
+        last_kill_used.pop((gid, uid), None)
+        if (gid, uid) in random_vow_cds:
+            random_vow_cds[(gid, uid)]["kill"] = None
+        if (gid, uid) in stack_vow_charges:
+            stack_vow_charges[(gid, uid)]["kill"] = []
     if which in ("both", "save"):
-        last_save_used.pop(target.id, None)
-        if target.id in random_vow_cds:
-            random_vow_cds[target.id]["save"] = None
-        if target.id in stack_vow_charges:
-            stack_vow_charges[target.id]["save"] = []
+        last_save_used.pop((gid, uid), None)
+        if (gid, uid) in random_vow_cds:
+            random_vow_cds[(gid, uid)]["save"] = None
+        if (gid, uid) in stack_vow_charges:
+            stack_vow_charges[(gid, uid)]["save"] = []
     save_cooldowns()
     label = "kill and save cooldowns" if which == "both" else f"{which} cooldown"
     await interaction.response.send_message(f"✅ Reset {label} for {target.mention}.")
 
 
-@bot.tree.command(name="cooldowns", description="View or set the default cooldown for roleless users (mods only)")
-@app_commands.describe(hours="New default cooldown in hours (e.g. 6 or 0.5). Leave blank to view current value.")
+@bot.tree.command(name="cooldowns", description="View or set the default cooldown (mods only)")
+@app_commands.describe(hours="New default cooldown in hours. Leave blank to view.")
 async def slash_cooldowns(interaction: discord.Interaction, hours: float = None):
     if not interaction.user.guild_permissions.manage_roles and not interaction.user.guild_permissions.manage_guild:
-        await interaction.response.send_message("You need the Manage Roles permission to change the default cooldown.", ephemeral=True)
+        await interaction.response.send_message("You need the Manage Roles permission.", ephemeral=True)
         return
     if hours is None:
         current = get_default_cooldown(interaction.guild_id)
-        await interaction.response.send_message(f"Current default cooldown: **{current}h**\nUse `/cooldowns hours:<value>` to change it.", ephemeral=True)
+        await interaction.response.send_message(f"Current default cooldown: **{current}h**", ephemeral=True)
         return
     if hours < 0:
-        await interaction.response.send_message("Cooldown must be a non-negative number.", ephemeral=True)
+        await interaction.response.send_message("Cooldown must be non-negative.", ephemeral=True)
         return
     if interaction.guild_id not in server_settings:
         server_settings[interaction.guild_id] = {}
     server_settings[interaction.guild_id]["default_cooldown"] = hours
     save_server_settings()
-    await interaction.response.send_message(f"✅ Default cooldown for roleless users set to **{hours}h**")
+    await interaction.response.send_message(f"✅ Default cooldown set to **{hours}h**")
 
 
 @bot.tree.command(name="setdefaultrole", description="Set the role required to use GIFs (mods only)")
-@app_commands.describe(role="The role to require. Leave blank to view current setting.")
+@app_commands.describe(role="The role to require. Leave blank to view.")
 async def slash_setdefaultrole(interaction: discord.Interaction, role: discord.Role = None):
     if not interaction.user.guild_permissions.manage_roles and not interaction.user.guild_permissions.manage_guild:
-        await interaction.response.send_message("You need the Manage Roles permission to do that.", ephemeral=True)
+        await interaction.response.send_message("You need the Manage Roles permission.", ephemeral=True)
         return
     if role is None:
         current_id = get_default_role(interaction.guild_id)
-        if current_id:
-            role_obj = interaction.guild.get_role(current_id)
-            role_str = role_obj.mention if role_obj else f"unknown role (ID {current_id})"
-        else:
-            role_str = "none (everyone can use GIFs)"
+        role_str = interaction.guild.get_role(current_id).mention if current_id and interaction.guild.get_role(current_id) else "none (everyone)"
         await interaction.response.send_message(f"Current default GIF role: {role_str}", ephemeral=True)
         return
     if interaction.guild_id not in server_settings:
@@ -1203,12 +1231,12 @@ async def slash_setdefaultrole(interaction: discord.Interaction, role: discord.R
 @bot.tree.command(name="cleardefaultrole", description="Remove the role requirement for using GIFs (mods only)")
 async def slash_cleardefaultrole(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.manage_roles and not interaction.user.guild_permissions.manage_guild:
-        await interaction.response.send_message("You need the Manage Roles permission to do that.", ephemeral=True)
+        await interaction.response.send_message("You need the Manage Roles permission.", ephemeral=True)
         return
     if interaction.guild_id in server_settings:
         server_settings[interaction.guild_id].pop("default_role_id", None)
         save_server_settings()
-    await interaction.response.send_message("✅ Default role requirement cleared. Everyone can now use GIFs.")
+    await interaction.response.send_message("✅ Role requirement cleared.")
 
 
 # =========================
@@ -1231,7 +1259,7 @@ def build_vote_embed(user_id: int) -> discord.Embed:
     if has_active_vote(user_id):
         expires = vote_expires_in(user_id)
         expires_str = str(expires).split('.')[0] if expires else "soon"
-        embed.add_field(name="✅ Your vote is active!", value=f"You have 25% off your cooldowns. Expires in **{expires_str}**.", inline=False)
+        embed.add_field(name="✅ Your vote is active!", value=f"25% off cooldowns. Expires in **{expires_str}**.", inline=False)
     else:
         embed.add_field(name="No active vote", value="Vote now to unlock your discount!", inline=False)
     return embed
@@ -1326,38 +1354,30 @@ async def finalize_clash(clash_id: int):
             actual_duration = 30
         elif attacker_vow == "Random Vow":
             actual_duration = roll_random_vow_timeout()
-            set_random_vow_cd(user_id, "kill")
+            set_random_vow_cd(guild_id, user_id, "kill")
             save_cooldowns()
         else:
             actual_duration = timeout_duration
 
-        # Hakari solo (no one fought back)
+        # Hakari solo
         if attacker_vow == "Hakari Vow" and len(participants) == 2 and not clash_data.get("target_challenged"):
             original_target = participants[1]
             if random.random() < 0.36:
-                if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=251), channel, f"hakari win: {original_target}"):
-                    await channel.send(
-                        f"🎰 **JACKPOT!** {original_target.mention} has been muted for 4m11s "
-                        f"by {attacker.mention} [Hakari Vow] lmao"
-                    )
+                if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=251), channel):
+                    await channel.send(f"🎰 **JACKPOT!** {original_target.mention} muted 4m11s by {attacker.mention} [Hakari Vow] lmao")
             else:
-                if await try_timeout(attacker, discord.utils.utcnow() + timedelta(seconds=90), channel, f"hakari loss: {attacker}"):
-                    await channel.send(
-                        f"💀 {attacker.mention} [Hakari Vow] lost the gamble and muted themselves for 90s lmaooo"
-                    )
+                if await try_timeout(attacker, discord.utils.utcnow() + timedelta(seconds=90), channel):
+                    await channel.send(f"💀 {attacker.mention} [Hakari Vow] lost the gamble — muted 90s lmaooo")
             return
 
-        # 2 participants, target didn't fight back → just timeout
+        # No clash, just timeout
         if len(participants) == 2 and not clash_data.get("target_challenged"):
             original_target = participants[1]
-            if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=actual_duration), channel, f"timeout: {original_target}"):
-                await channel.send(
-                    f"{original_target.mention} has been timed out for {actual_duration}s by "
-                    f"{attacker.mention}{vow_str} lmao"
-                )
+            if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=actual_duration), channel):
+                await channel.send(f"{original_target.mention} has been timed out for {actual_duration}s by {attacker.mention}{vow_str} lmao")
             return
 
-        # 1v1 clash (target fought back)
+        # 1v1 clash
         if len(participants) == 2:
             original_target = participants[1]
             attacker_roles = [r.name for r in attacker.roles]
@@ -1372,7 +1392,7 @@ async def finalize_clash(clash_id: int):
                 await channel.send("can't clash with someone that strong buddy")
             await asyncio.sleep(3)
 
-            last_kill_used[original_target.id] = datetime.utcnow()
+            last_kill_used[(guild_id, original_target.id)] = datetime.utcnow()
             save_cooldowns()
 
             attacker_wins = resolve_clash(attacker_tickets, defender_tickets)
@@ -1383,29 +1403,29 @@ async def finalize_clash(clash_id: int):
                 actual_duration = 30
             elif not attacker_wins and d_vow == "Random Vow":
                 actual_duration = roll_random_vow_timeout()
-                set_random_vow_cd(original_target.id, "kill")
+                set_random_vow_cd(guild_id, original_target.id, "kill")
                 save_cooldowns()
 
             if attacker_wins and attacker_vow == "Hakari Vow":
                 if random.random() < 0.50:
                     if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=251), channel):
-                        await channel.send(f"🎰 **JACKPOT! (clash)** {original_target.mention} muted for 4m11s by {attacker.mention} [Hakari Vow]")
+                        await channel.send(f"🎰 **JACKPOT! (clash)** {original_target.mention} muted 4m11s by {attacker.mention} [Hakari Vow]")
                 else:
                     if await try_timeout(attacker, discord.utils.utcnow() + timedelta(seconds=90), channel):
-                        await channel.send(f"💀 {attacker.mention} [Hakari Vow] won the clash but lost the gamble — muted 90s lmaooo")
+                        await channel.send(f"💀 {attacker.mention} [Hakari Vow] won but lost the gamble — muted 90s lmaooo")
             elif not attacker_wins and d_vow == "Hakari Vow":
                 if random.random() < 0.50:
                     if await try_timeout(attacker, discord.utils.utcnow() + timedelta(seconds=251), channel):
-                        await channel.send(f"🎰 **JACKPOT! (clash)** {attacker.mention} muted for 4m11s by {original_target.mention} [Hakari Vow]")
+                        await channel.send(f"🎰 **JACKPOT! (clash)** {attacker.mention} muted 4m11s by {original_target.mention} [Hakari Vow]")
                 else:
                     if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=90), channel):
-                        await channel.send(f"💀 {original_target.mention} [Hakari Vow] won the clash but lost the gamble — muted 90s lmaooo")
+                        await channel.send(f"💀 {original_target.mention} [Hakari Vow] won but lost the gamble — muted 90s lmaooo")
             else:
                 if await try_timeout(loser, discord.utils.utcnow() + timedelta(seconds=actual_duration), channel):
                     await channel.send(f"{winner.mention} WON\n{loser.mention} get timed out")
             return
 
-        # Multi-way clash (3–10 people)
+        # Multi-way clash (3-10)
         all_roles_list = [[r.name for r in p.roles] for p in participants]
         await channel.send(pick_clash_gif(all_roles_list))
         await channel.send(f"⚔️ **{len(participants)}-WAY CLASH!**")
@@ -1415,7 +1435,7 @@ async def finalize_clash(clash_id: int):
 
         now_snap = datetime.utcnow()
         for p in participants[1:]:
-            last_kill_used[p.id] = now_snap
+            last_kill_used[(guild_id, p.id)] = now_snap
         save_cooldowns()
 
         ticket_list = [(p, get_clash_tickets([r.name for r in p.roles], guild_id)) for p in participants]
@@ -1451,11 +1471,13 @@ async def on_message(message):
         return
 
     author_roles = [role.name for role in message.author.roles]
+    gid = message.guild.id
+    uid = message.author.id
 
     if bot.user in message.mentions:
-        role_cooldowns = get_role_cooldowns(message.guild.id)
+        role_cooldowns = get_role_cooldowns(gid)
         valid_roles_for_mention = [r for r in author_roles if r in role_cooldowns]
-        default_role_id_for_mention = get_default_role(message.guild.id)
+        default_role_id_for_mention = get_default_role(gid)
         has_named_role_mention = bool(valid_roles_for_mention)
         has_required_role_mention = (
             default_role_id_for_mention is not None and
@@ -1469,7 +1491,7 @@ async def on_message(message):
                 f"Subscribe to the Patreon for early access: https://www.patreon.com/15981390/join"
             )
             return
-        msg = build_cooldown_status(message.author, message.guild.id)
+        msg = build_cooldown_status(message.author, gid)
         await message.channel.send(msg)
         return
 
@@ -1491,7 +1513,7 @@ async def on_message(message):
             participants = clash_data["participants"]
             if (
                 len(participants) >= 2
-                and message.author.id == participants[1].id
+                and uid == participants[1].id
                 and not clash_data.get("target_challenged")
             ):
                 clash_data["target_challenged"] = True
@@ -1500,15 +1522,12 @@ async def on_message(message):
                 clash_head_lookup[message.id] = clash_id
                 if not clash_data["task"].done():
                     clash_data["task"].cancel()
-                await message.channel.send(
-                    f"⚔️ {participants[1].mention} is fighting back! Reply to their GIF to join the clash!"
-                )
-                new_task = asyncio.create_task(finalize_clash(clash_id))
-                clash_data["task"] = new_task
+                await message.channel.send(f"⚔️ {participants[1].mention} is fighting back! Reply to their GIF to join!")
+                clash_data["task"] = asyncio.create_task(finalize_clash(clash_id))
             elif len(participants) < 10:
-                already_in = message.author.id in [p.id for p in participants]
+                already_in = uid in [p.id for p in participants]
                 if not already_in:
-                    new_member = message.guild.get_member(message.author.id)
+                    new_member = message.guild.get_member(uid)
                     if new_member:
                         participants.append(new_member)
                         clash_head_lookup.pop(clash_data["head_message_id"], None)
@@ -1516,12 +1535,10 @@ async def on_message(message):
                         clash_head_lookup[message.id] = clash_id
                         if not clash_data["task"].done():
                             clash_data["task"].cancel()
-                        count = len(participants)
                         await message.channel.send(
-                            f"{new_member.mention} jumped into the clash! ⚔️ **{count} fighters** — reply to their GIF to also join!"
+                            f"{new_member.mention} jumped into the clash! ⚔️ **{len(participants)} fighters** — reply to their GIF to also join!"
                         )
-                        new_task = asyncio.create_task(finalize_clash(clash_id))
-                        clash_data["task"] = new_task
+                        clash_data["task"] = asyncio.create_task(finalize_clash(clash_id))
         await bot.process_commands(message)
         return
 
@@ -1540,10 +1557,10 @@ async def on_message(message):
     if not member_to_timeout:
         return
 
-    role_cooldowns = get_role_cooldowns(message.guild.id)
+    role_cooldowns = get_role_cooldowns(gid)
     valid_roles = [r for r in author_roles if r in role_cooldowns]
-    default_cd = get_default_cooldown(message.guild.id)
-    default_role_id = get_default_role(message.guild.id)
+    default_cd = get_default_cooldown(gid)
+    default_role_id = get_default_role(gid)
 
     has_named_role = bool(valid_roles)
     has_required_role = (
@@ -1570,13 +1587,11 @@ async def on_message(message):
 
     vow = get_active_vow(author_roles)
     now = datetime.utcnow()
-    user_id = message.author.id
     action = "kill" if is_kill_gif else "save"
 
     if vow == "CONFLICT":
         await message.channel.send(
-            f"{message.author.mention}, ⚠️ you have multiple Binding Vow roles — "
-            "vows are being ignored until this is resolved."
+            f"{message.author.mention}, ⚠️ you have multiple Binding Vow roles — vows are being ignored."
         )
         vow = None
 
@@ -1602,15 +1617,14 @@ async def on_message(message):
     # =========================
     if vow == "Stack Vow":
         sv_cd = base_cd * STACK_VOW_MULTIPLIER
-        available = stack_vow_available_charges(user_id, action, sv_cd, now)
+        available = stack_vow_available_charges(gid, uid, action, sv_cd, now)
         if available == 0:
-            next_regen = stack_vow_next_regen(user_id, action, sv_cd, now)
+            next_regen = stack_vow_next_regen(gid, uid, action, sv_cd, now)
             await message.channel.send(
-                f"{message.author.mention}, [Stack Vow] no {action} charges left — "
-                f"next charge in **{str(next_regen).split('.')[0]}**"
+                f"{message.author.mention}, [Stack Vow] no {action} charges left — next charge in **{str(next_regen).split('.')[0]}**"
             )
             return
-        stack_vow_consume_charge(user_id, action, now)
+        stack_vow_consume_charge(gid, uid, action, now)
         remaining_after = available - 1
         vow_str = f" [Stack Vow | {remaining_after}/{STACK_VOW_MAX_CHARGES} {action} charges left]"
 
@@ -1618,8 +1632,8 @@ async def on_message(message):
     # RANDOM VOW
     # =========================
     elif vow == "Random Vow":
-        rv_cd = get_random_vow_cd(user_id, action)
-        last = last_kill_used.get(user_id) if action == "kill" else last_save_used.get(user_id)
+        rv_cd = get_random_vow_cd(gid, uid, action)
+        last = last_kill_used.get((gid, uid)) if action == "kill" else last_save_used.get((gid, uid))
         if rv_cd is not None and last is not None and now - last < timedelta(hours=rv_cd):
             remaining = timedelta(hours=rv_cd) - (now - last)
             await message.channel.send(
@@ -1632,8 +1646,8 @@ async def on_message(message):
     # MIRACLE VOW
     # =========================
     elif vow == "Miracle Vow":
-        miracle_cd = apply_vote_discount(base_cd * 2.5, user_id)
-        last = last_kill_used.get(user_id) if action == "kill" else last_save_used.get(user_id)
+        miracle_cd = apply_vote_discount(base_cd * 2.5, uid)
+        last = last_kill_used.get((gid, uid)) if action == "kill" else last_save_used.get((gid, uid))
         if last and now - last < timedelta(hours=miracle_cd):
             remaining = timedelta(hours=miracle_cd) - (now - last)
             await message.channel.send(
@@ -1642,10 +1656,13 @@ async def on_message(message):
             return
         vow_str = " [Miracle Vow]"
 
+    # =========================
+    # RAGEBAIT VOW
+    # =========================
     elif vow == "Ragebait Vow":
         if action == "save":
-            save_cd = apply_vote_discount(base_cd, user_id)
-            last = last_save_used.get(user_id)
+            save_cd = apply_vote_discount(base_cd, uid)
+            last = last_save_used.get((gid, uid))
             if last and now - last < timedelta(hours=save_cd):
                 remaining = timedelta(hours=save_cd) - (now - last)
                 await message.channel.send(
@@ -1658,15 +1675,15 @@ async def on_message(message):
     # STANDARD VOW
     # =========================
     else:
-        effective_cd = apply_vote_discount(apply_vow(base_cd, action, vow), user_id)
+        effective_cd = apply_vote_discount(apply_vow(base_cd, action, vow), uid)
         vow_str = format_vow_label(vow)
-        vote_label = " 📥 25% off" if has_active_vote(user_id) else ""
+        vote_label = " 📥 25% off" if has_active_vote(uid) else ""
 
         if effective_cd == -1.0:
             await message.channel.send(f"{message.author.mention}, your {vow} forbids you from this action. 🪹")
             return
 
-        last = last_kill_used.get(user_id) if action == "kill" else last_save_used.get(user_id)
+        last = last_kill_used.get((gid, uid)) if action == "kill" else last_save_used.get((gid, uid))
 
         if effective_cd > 0 and last:
             if now - last < timedelta(hours=effective_cd):
@@ -1676,13 +1693,13 @@ async def on_message(message):
                     target_roles = [r.name for r in member_to_timeout.roles]
                     target_vow = get_active_vow(target_roles)
                     if target_vow == "Miracle Vow":
-                        if not can_gain_miracle_from_failed_timeout(member_to_timeout.id):
+                        if not can_gain_miracle_from_failed_timeout(gid, member_to_timeout.id):
                             await message.channel.send(
                                 f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: {str(remaining).split('.')[0]}"
                             )
                             return
-                        new_count = add_miracle(member_to_timeout.id)
-                        record_miracle_gain_from_failed_timeout(member_to_timeout.id)
+                        new_count = add_miracle(gid, member_to_timeout.id)
+                        record_miracle_gain_from_failed_timeout(gid, member_to_timeout.id)
                         save_cooldowns()
                         if new_count == -1:
                             await message.channel.send(
@@ -1697,13 +1714,12 @@ async def on_message(message):
                         return
 
                 await message.channel.send(
-                    f"{message.author.mention}, ({role_label}{vow_str}{vote_label}) cooldown remaining: "
-                    f"{str(remaining).split('.')[0]}"
+                    f"{message.author.mention}, ({role_label}{vow_str}{vote_label}) cooldown remaining: {str(remaining).split('.')[0]}"
                 )
                 return
 
         if action == "kill":
-            last_kill_used[user_id] = now
+            last_kill_used[(gid, uid)] = now
             save_cooldowns()
 
     # =========================
@@ -1714,32 +1730,31 @@ async def on_message(message):
             await message.channel.send("They're not even timed out bro 💀")
             if action == "save":
                 if vow == "Stack Vow":
-                    user_data = stack_vow_charges.get(user_id, {})
+                    user_data = stack_vow_charges.get((gid, uid), {})
                     if user_data.get("save"):
                         user_data["save"].pop()
                 elif vow != "Random Vow":
-                    last_save_used.pop(user_id, None)
+                    last_save_used.pop((gid, uid), None)
             return
 
         remaining = member_to_timeout.timed_out_until - discord.utils.utcnow()
         if remaining.total_seconds() <= 90:
-            if await try_untimeout(member_to_timeout, message.channel, f"untimeout: {member_to_timeout}"):
+            if await try_untimeout(member_to_timeout, message.channel):
                 if vow == "Random Vow":
-                    last_save_used[user_id] = now
-                    set_random_vow_cd(user_id, "save")
+                    last_save_used[(gid, uid)] = now
+                    set_random_vow_cd(gid, uid, "save")
                 elif vow == "Miracle Vow":
-                    last_save_used[user_id] = now
+                    last_save_used[(gid, uid)] = now
                 elif vow == "Ragebait Vow":
-                    last_save_used[user_id] = now
+                    last_save_used[(gid, uid)] = now
                 elif vow != "Stack Vow":
-                    last_save_used[user_id] = now
+                    last_save_used[(gid, uid)] = now
                 save_cooldowns()
                 await message.channel.send(
-                    f"{member_to_timeout.mention} has been freed early by "
-                    f"{message.author.mention}{vow_str}"
+                    f"{member_to_timeout.mention} has been freed early by {message.author.mention}{vow_str}"
                 )
                 if vow == "Miracle Vow":
-                    new_count = add_miracle(user_id)
+                    new_count = add_miracle(gid, uid)
                     save_cooldowns()
                     if new_count == -1:
                         await message.channel.send(f"{message.author.mention} is already at max miracles ({MIRACLE_MAX}/{MIRACLE_MAX})!")
@@ -1748,7 +1763,7 @@ async def on_message(message):
                 saved_roles = [r.name for r in member_to_timeout.roles]
                 saved_vow = get_active_vow(saved_roles)
                 if saved_vow == "Miracle Vow":
-                    new_count = add_miracle(member_to_timeout.id)
+                    new_count = add_miracle(gid, member_to_timeout.id)
                     save_cooldowns()
                     if new_count == -1:
                         await message.channel.send(f"{member_to_timeout.mention} is already at max miracles ({MIRACLE_MAX}/{MIRACLE_MAX})!")
@@ -1764,18 +1779,17 @@ async def on_message(message):
     # =========================
     if is_kill_gif:
         if vow == "Ragebait Vow":
-            if is_ragebait_on_cd(user_id, now):
-                remaining = get_ragebait_remaining(user_id, now)
+            if is_ragebait_on_cd(gid, uid, now):
+                remaining = get_ragebait_remaining(gid, uid, now)
                 await message.channel.send(
                     f"{message.author.mention}, [Ragebait Vow] ability on cooldown: **{str(remaining).split('.')[0]}**"
                 )
                 return
-            last_kill_used[member_to_timeout.id] = now
-            ragebait_last_used[user_id] = now
+            last_kill_used[(gid, member_to_timeout.id)] = now
+            ragebait_last_used[(gid, uid)] = now
             save_cooldowns()
             await message.channel.send(
-                f"{message.author.mention} [Ragebait Vow] raged at {member_to_timeout.mention}! "
-                f"Their kill guh is now on CD."
+                f"{message.author.mention} [Ragebait Vow] raged at {member_to_timeout.mention}! Their kill guh is now on CD."
             )
             await bot.process_commands(message)
             return
@@ -1783,10 +1797,10 @@ async def on_message(message):
         timeout_duration = 180 if vow == "Destruction Vow" else TIMEOUT_SECONDS
 
         if vow == "Random Vow":
-            last_kill_used[user_id] = now
+            last_kill_used[(gid, uid)] = now
             save_cooldowns()
         elif vow == "Miracle Vow":
-            last_kill_used[user_id] = now
+            last_kill_used[(gid, uid)] = now
             save_cooldowns()
 
         attacker = message.author
@@ -1798,23 +1812,23 @@ async def on_message(message):
         defender_roles_list = [r.name for r in original_target.roles]
         defender_vow_check = get_active_vow(defender_roles_list)
         if defender_vow_check == "Miracle Vow":
-            miracles = get_miracle_count(original_target.id)
+            miracles = get_miracle_count(gid, original_target.id)
             if miracles >= MIRACLE_BLOCK_COST:
-                consume_miracles(original_target.id, MIRACLE_BLOCK_COST)
+                consume_miracles(gid, original_target.id, MIRACLE_BLOCK_COST)
                 save_cooldowns()
                 await message.channel.send(
                     f"{MIRACLE_BLOCK_GIF}\n"
                     f"✨ {original_target.mention}'s miracle blocked the guh! {MIRACLE_BLOCK_COST} miracles consumed. "
-                    f"They now have **{get_miracle_count(original_target.id)}/{MIRACLE_MAX}** miracles."
+                    f"They now have **{get_miracle_count(gid, original_target.id)}/{MIRACLE_MAX}** miracles."
                 )
                 if vow == "Random Vow":
-                    last_kill_used.pop(user_id, None)
+                    last_kill_used.pop((gid, uid), None)
                 elif vow == "Stack Vow":
-                    user_data = stack_vow_charges.get(user_id, {})
+                    user_data = stack_vow_charges.get((gid, uid), {})
                     if user_data.get("kill"):
                         user_data["kill"].pop()
                 elif vow != "Miracle Vow":
-                    last_kill_used.pop(user_id, None)
+                    last_kill_used.pop((gid, uid), None)
                 save_cooldowns()
                 await bot.process_commands(message)
                 return
@@ -1826,14 +1840,12 @@ async def on_message(message):
             "timeout_duration": timeout_duration,
             "attacker_vow": attacker_vow,
             "vow_str": vow_str,
-            "user_id": user_id,
+            "user_id": uid,
             "task": None,
         }
         pending_clashes[clash_id] = clash_entry
         clash_head_lookup[message.id] = clash_id
-
-        task = asyncio.create_task(finalize_clash(clash_id))
-        clash_entry["task"] = task
+        clash_entry["task"] = asyncio.create_task(finalize_clash(clash_id))
 
     await bot.process_commands(message)
 

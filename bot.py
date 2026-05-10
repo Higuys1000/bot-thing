@@ -84,7 +84,10 @@ TARGET_GIFS = [
     "https://tenor.com/view/d9luxe-gif-4267568862040013492",
     "https://tenor.com/view/kinblood-lebron-dunk-gif-12278440",
     "https://tenor.com/view/nanako-gif-366179704676552608",
-    "https://cdn.discordapp.com/attachments/1501576319597674547/1501657404528656454/image0.gif"
+    "https://cdn.discordapp.com/attachments/1501576319597674547/1501657404528656454/image0.gif",
+    "https://tenor.com/view/sukuna-jujutsu-kaisen-kneel-down-jjk-sukuna-ryomen-gif-17856271175806049937",
+    "https://cdn.discordapp.com/attachments/1489398429191770252/1489799839116951672/tojirio.gif",
+    "https://cdn.discordapp.com/attachments/1497070395059208192/1499875807211032607/IMG_7655.gif"
 ]
 
 UNTIMEOUT_GIFS = [
@@ -119,7 +122,8 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/lamelo-ball-lamelo-zesty-gif-3374658710119383750",
     "https://tenor.com/view/storm-rain-raining-gif-12250202288703677838",
     "https://tenor.com/view/death-of-the-self-gay-fluff-shigadeku-shigaraki-deku-gif-24033047",
-    "https://tenor.com/view/gay-anime-anime-gay-gif-18237425560170880188"
+    "https://tenor.com/view/gay-anime-anime-gay-gif-18237425560170880188",
+    "https://cdn.discordapp.com/attachments/1460734437485576234/1460734876323152024/image0.gif"
 ]
 
 CLASH_GIFS = [

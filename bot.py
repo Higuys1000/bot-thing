@@ -118,6 +118,8 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/omni-man-sad-invincible-gif-9211102013467947727",
     "https://tenor.com/view/mercy-overwatch-come-here-gif-14280244",
     "https://tenor.com/view/lamelo-ball-lamelo-zesty-gif-3374658710119383750",
+
+"https://cdn.discordapp.com/attachments/1501576319597674547/1501657150697771100/image0.gif",
     "https://tenor.com/view/storm-rain-raining-gif-12250202288703677838",
     "https://tenor.com/view/death-of-the-self-gay-fluff-shigadeku-shigaraki-deku-gif-24033047",
     "https://tenor.com/view/gay-anime-anime-gay-gif-18237425560170880188"

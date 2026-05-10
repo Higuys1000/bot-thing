@@ -307,8 +307,8 @@ BINDING_VOWS = {
     },
     "Healing Vow": {
         "kill_multiplier": None,
-        "save_multiplier": 0.02,
-        "description": "Cannot kill / Save CDs ÷50",
+        "save_multiplier": 0.002,
+        "description": "Cannot kill / Save CDs ÷500",
     },
     "Hakari Vow": {
         "kill_multiplier": 1.0,

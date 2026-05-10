@@ -84,10 +84,7 @@ TARGET_GIFS = [
     "https://tenor.com/view/d9luxe-gif-4267568862040013492",
     "https://tenor.com/view/kinblood-lebron-dunk-gif-12278440",
     "https://tenor.com/view/nanako-gif-366179704676552608",
-    "https://cdn.discordapp.com/attachments/1501576319597674547/1501657404528656454/image0.gif",
-    "https://tenor.com/view/sukuna-jujutsu-kaisen-kneel-down-jjk-sukuna-ryomen-gif-17856271175806049937",
-    "https://cdn.discordapp.com/attachments/1489398429191770252/1489799839116951672/tojirio.gif",
-    "https://cdn.discordapp.com/attachments/1497070395059208192/1499875807211032607/IMG_7655.gif"
+    "https://cdn.discordapp.com/attachments/1501576319597674547/1501657404528656454/image0.gif"
 ]
 
 UNTIMEOUT_GIFS = [
@@ -122,8 +119,7 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/lamelo-ball-lamelo-zesty-gif-3374658710119383750",
     "https://tenor.com/view/storm-rain-raining-gif-12250202288703677838",
     "https://tenor.com/view/death-of-the-self-gay-fluff-shigadeku-shigaraki-deku-gif-24033047",
-    "https://tenor.com/view/gay-anime-anime-gay-gif-18237425560170880188",
-    "https://cdn.discordapp.com/attachments/1460734437485576234/1460734876323152024/image0.gif"
+    "https://tenor.com/view/gay-anime-anime-gay-gif-18237425560170880188"
 ]
 
 CLASH_GIFS = [
@@ -311,8 +307,8 @@ BINDING_VOWS = {
     },
     "Healing Vow": {
         "kill_multiplier": None,
-        "save_multiplier": 0.002,
-        "description": "Cannot kill / Save CDs ÷ 500",
+        "save_multiplier": 0.02,
+        "description": "Cannot kill / Save CDs ÷50",
     },
     "Hakari Vow": {
         "kill_multiplier": 1.0,
@@ -526,6 +522,44 @@ async def log_error(guild, label: str, error: Exception):
             f"⚠️ **Bot Error — {label}**\n"
             f"```{type(error).__name__}: {error}\n\n{tb_trimmed}```"
         )
+
+
+async def try_timeout(member: discord.Member, until, channel: discord.TextChannel, label: str = "") -> bool:
+    """Applies a timeout and sends a user-facing error on failure. Returns True on success."""
+    bot_member = channel.guild.me
+    if not bot_member.guild_permissions.moderate_members:
+        await channel.send("bot needs timeout perms")
+        return False
+    if member.top_role >= bot_member.top_role:
+        await channel.send("bot cant mute someone with higher level")
+        return False
+    try:
+        await member.timeout(until)
+        return True
+    except discord.Forbidden:
+        await channel.send("bot needs timeout perms")
+        return False
+    except Exception as e:
+        await log_error(channel.guild, label or f"timeout {member}", e)
+        return False
+
+
+async def try_untimeout(member: discord.Member, channel: discord.TextChannel, label: str = "") -> bool:
+    """Removes a timeout and sends a user-facing error on failure. Returns True on success."""
+    bot_member = channel.guild.me
+    if not bot_member.guild_permissions.moderate_members:
+        await channel.send("bot needs timeout perms")
+        return False
+    try:
+        await member.timeout(None)
+        return True
+    except discord.Forbidden:
+        await channel.send("bot needs timeout perms")
+        return False
+    except Exception as e:
+        await channel.send(f"❌ Failed to free {member.mention}.")
+        await log_error(channel.guild, label or f"untimeout {member}", e)
+        return False
 
 
 # =========================
@@ -1085,35 +1119,75 @@ async def finalize_clash(clash_id: int):
         if attacker_vow == "Hakari Vow" and len(participants) == 2:
             original_target = participants[1]
             if random.random() < 0.36:
-                try:
-                    await original_target.timeout(discord.utils.utcnow() + timedelta(seconds=251))
+                if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=251), channel, f"hakari win: {original_target}"):
                     await channel.send(
                         f"\U0001f3b0 **JACKPOT!** {original_target.mention} has been muted for 4m11s "
                         f"by {attacker.mention} [Hakari Vow] lmao"
                     )
-                except Exception as e:
-                    await log_error(channel.guild, f"hakari win: timeout {original_target}", e)
             else:
-                try:
-                    await attacker.timeout(discord.utils.utcnow() + timedelta(seconds=90))
+                if await try_timeout(attacker, discord.utils.utcnow() + timedelta(seconds=90), channel, f"hakari loss: {attacker}"):
                     await channel.send(
                         f"\U0001f480 {attacker.mention} [Hakari Vow] lost the gamble and muted themselves for 90s lmaooo"
                     )
-                except Exception as e:
-                    await log_error(channel.guild, f"hakari loss: timeout {attacker}", e)
             return
 
-        # --- Direct timeout: no one joined ---
+        # --- 2 participants: direct timeout or 1v1 clash ---
         if len(participants) == 2:
             original_target = participants[1]
-            try:
-                await original_target.timeout(discord.utils.utcnow() + timedelta(seconds=actual_duration))
-                await channel.send(
-                    f"{original_target.mention} has been timed out for {actual_duration}s by "
-                    f"{attacker.mention}{vow_str} lmao"
-                )
-            except Exception as e:
-                await log_error(channel.guild, f"timeout: {original_target}", e)
+
+            # Target didn't fight back → just time them out
+            if not clash_data.get("target_challenged"):
+                if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=actual_duration), channel, f"timeout: {original_target}"):
+                    await channel.send(
+                        f"{original_target.mention} has been timed out for {actual_duration}s by "
+                        f"{attacker.mention}{vow_str} lmao"
+                    )
+                return
+
+            # Target fought back → 1v1 clash
+            attacker_roles = [r.name for r in attacker.roles]
+            d_roles = [r.name for r in original_target.roles]
+            d_vow = get_active_vow(d_roles)
+            attacker_tickets = get_clash_tickets(attacker_roles)
+            defender_tickets = get_clash_tickets(d_roles)
+
+            all_roles_list = [attacker_roles, d_roles]
+            await channel.send(pick_clash_gif(all_roles_list))
+            if any_gmm(all_roles_list):
+                await channel.send("can't clash with someone that strong buddy")
+            await asyncio.sleep(3)
+
+            last_kill_used[original_target.id] = datetime.utcnow()
+            save_cooldowns()
+
+            attacker_wins = resolve_clash(attacker_tickets, defender_tickets)
+            winner = attacker if attacker_wins else original_target
+            loser = original_target if attacker_wins else attacker
+
+            if not attacker_wins and d_vow == "Miracle Vow":
+                actual_duration = 30
+            elif not attacker_wins and d_vow == "Random Vow":
+                actual_duration = roll_random_vow_timeout()
+                set_random_vow_cd(original_target.id, "kill")
+                save_cooldowns()
+
+            if attacker_wins and attacker_vow == "Hakari Vow":
+                if random.random() < 0.50:
+                    if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=251), channel, f"hakari clash win: {original_target}"):
+                        await channel.send(f"\U0001f3b0 **JACKPOT! (clash)** {original_target.mention} muted for 4m11s by {attacker.mention} [Hakari Vow]")
+                else:
+                    if await try_timeout(attacker, discord.utils.utcnow() + timedelta(seconds=90), channel, f"hakari clash loss self: {attacker}"):
+                        await channel.send(f"\U0001f480 {attacker.mention} [Hakari Vow] won the clash but lost the gamble — muted 90s lmaooo")
+            elif not attacker_wins and d_vow == "Hakari Vow":
+                if random.random() < 0.50:
+                    if await try_timeout(attacker, discord.utils.utcnow() + timedelta(seconds=251), channel, f"hakari clash win: {attacker}"):
+                        await channel.send(f"\U0001f3b0 **JACKPOT! (clash)** {attacker.mention} muted for 4m11s by {original_target.mention} [Hakari Vow]")
+                else:
+                    if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=90), channel, f"hakari clash loss self: {original_target}"):
+                        await channel.send(f"\U0001f480 {original_target.mention} [Hakari Vow] won the clash but lost the gamble — muted 90s lmaooo")
+            else:
+                if await try_timeout(loser, discord.utils.utcnow() + timedelta(seconds=actual_duration), channel, f"clash timeout: {loser}"):
+                    await channel.send(f"{winner.mention} WON\n{loser.mention} get timed out")
             return
 
         # --- Multi-way clash (3–10 people) ---
@@ -1144,11 +1218,8 @@ async def finalize_clash(clash_id: int):
             losers = [p for p in participants if p.id != winner.id]
             await channel.send(f"\U0001f3c6 {winner.mention} WON the {len(participants)}-way clash!")
             for loser in losers:
-                try:
-                    await loser.timeout(discord.utils.utcnow() + timedelta(seconds=actual_duration))
+                if await try_timeout(loser, discord.utils.utcnow() + timedelta(seconds=actual_duration), channel, f"multi clash timeout: {loser}"):
                     await channel.send(f"{loser.mention} gets timed out!")
-                except Exception as e:
-                    await log_error(channel.guild, f"multi clash timeout: {loser}", e)
 
     except asyncio.CancelledError:
         pass
@@ -1203,23 +1274,42 @@ async def on_message(message):
     if is_kill_gif and message.reference.message_id in clash_head_lookup:
         clash_id = clash_head_lookup[message.reference.message_id]
         clash_data = pending_clashes.get(clash_id)
-        if clash_data and len(clash_data["participants"]) < 10:
-            already_in = message.author.id in [p.id for p in clash_data["participants"]]
-            if not already_in:
-                new_member = message.guild.get_member(message.author.id)
-                if new_member:
-                    clash_data["participants"].append(new_member)
-                    clash_head_lookup.pop(clash_data["head_message_id"], None)
-                    clash_data["head_message_id"] = message.id
-                    clash_head_lookup[message.id] = clash_id
-                    if not clash_data["task"].done():
-                        clash_data["task"].cancel()
-                    count = len(clash_data["participants"])
-                    await message.channel.send(
-                        f"{new_member.mention} jumped into the clash! ⚔️ **{count} fighters** — reply to their GIF to also join!"
-                    )
-                    new_task = asyncio.create_task(finalize_clash(clash_id))
-                    clash_data["task"] = new_task
+        if clash_data:
+            participants = clash_data["participants"]
+            # Original target fighting back → flag as 1v1 clash
+            if (
+                len(participants) >= 2
+                and message.author.id == participants[1].id
+                and not clash_data.get("target_challenged")
+            ):
+                clash_data["target_challenged"] = True
+                clash_head_lookup.pop(clash_data["head_message_id"], None)
+                clash_data["head_message_id"] = message.id
+                clash_head_lookup[message.id] = clash_id
+                if not clash_data["task"].done():
+                    clash_data["task"].cancel()
+                await message.channel.send(
+                    f"⚔️ {participants[1].mention} is fighting back! Reply to their GIF to join the clash!"
+                )
+                new_task = asyncio.create_task(finalize_clash(clash_id))
+                clash_data["task"] = new_task
+            elif len(participants) < 10:
+                already_in = message.author.id in [p.id for p in participants]
+                if not already_in:
+                    new_member = message.guild.get_member(message.author.id)
+                    if new_member:
+                        participants.append(new_member)
+                        clash_head_lookup.pop(clash_data["head_message_id"], None)
+                        clash_data["head_message_id"] = message.id
+                        clash_head_lookup[message.id] = clash_id
+                        if not clash_data["task"].done():
+                            clash_data["task"].cancel()
+                        count = len(participants)
+                        await message.channel.send(
+                            f"{new_member.mention} jumped into the clash! ⚔️ **{count} fighters** — reply to their GIF to also join!"
+                        )
+                        new_task = asyncio.create_task(finalize_clash(clash_id))
+                        clash_data["task"] = new_task
         await bot.process_commands(message)
         return
 
@@ -1420,8 +1510,7 @@ async def on_message(message):
 
         remaining = member_to_timeout.timed_out_until - discord.utils.utcnow()
         if remaining.total_seconds() <= 90:
-            try:
-                await member_to_timeout.timeout(None)
+            if await try_untimeout(member_to_timeout, message.channel, f"untimeout: {member_to_timeout}"):
                 if vow == "Random Vow":
                     last_save_used[user_id] = now
                     set_random_vow_cd(user_id, "save")
@@ -1452,9 +1541,6 @@ async def on_message(message):
                         await message.channel.send(f"{member_to_timeout.mention} is already at max miracles ({MIRACLE_MAX}/{MIRACLE_MAX})!")
                     else:
                         await message.channel.send(f"✨ {member_to_timeout.mention} got a miracle from being saved! They now have **{new_count}/{MIRACLE_MAX}** miracles.")
-            except Exception as e:
-                await message.channel.send("Failed to remove timeout.")
-                await log_error(message.guild, f"untimeout: remove timeout from {member_to_timeout}", e)
         else:
             await message.channel.send(f"Too long left on timeout ({int(remaining.total_seconds())}s). Can't save them.")
         await bot.process_commands(message)

@@ -84,7 +84,8 @@ TARGET_GIFS = [
     "https://tenor.com/view/d9luxe-gif-4267568862040013492",
     "https://tenor.com/view/kinblood-lebron-dunk-gif-12278440",
     "https://tenor.com/view/nanako-gif-366179704676552608",
-    "https://cdn.discordapp.com/attachments/1501576319597674547/1501657404528656454/image0.gif"
+    "https://cdn.discordapp.com/attachments/1501576319597674547/1501657404528656454/image0.gif",
+    "https://cdn.discordapp.com/attachments/1460734437485576234/1460734876323152024/image0.gif"
 ]
 
 UNTIMEOUT_GIFS = [

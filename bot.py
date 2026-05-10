@@ -397,7 +397,8 @@ BINDING_VOWS = {
     },
     "Bitchout Vow": {
         "kill_multiplier": None,
-        "save_multiplier": None,        "description": "Cannot kill or save anyone. Immune to being guhed (except by Good Moderator Morning).",
+        "save_multiplier": None,
+        "description": "Cannot kill or save anyone. Immune to being guhed (except by Good Moderator Morning).",
     },
     "Ragebait Vow": {
         "kill_multiplier": 1.0,
@@ -796,7 +797,8 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
     gid = guild_id
 
     if vow == "CONFLICT":
-        return (            f"{member.mention}, ⚠️ you have multiple Binding Vow roles — "
+        return (
+            f"{member.mention}, ⚠️ you have multiple Binding Vow roles — "
             "vows are being ignored until this is resolved."
         )
 
@@ -1195,7 +1197,8 @@ async def slash_resetcooldown(interaction: discord.Interaction, target: discord.
 async def slash_cooldowns(interaction: discord.Interaction, hours: float = None):
     if not interaction.user.guild_permissions.manage_roles and not interaction.user.guild_permissions.manage_guild:
         await interaction.response.send_message("You need the Manage Roles permission.", ephemeral=True)
-        return    if hours is None:
+        return
+    if hours is None:
         current = get_default_cooldown(interaction.guild_id)
         await interaction.response.send_message(f"Current default cooldown: **{current}h**", ephemeral=True)
         return
@@ -1594,7 +1597,8 @@ async def on_message(message):
         )
         vow = None
 
-    # =========================    # BITCHOUT VOW
+    # =========================
+    # BITCHOUT VOW
     # =========================
     if is_kill_gif:
         defender_roles = [r.name for r in member_to_timeout.roles]

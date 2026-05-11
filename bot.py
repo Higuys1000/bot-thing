@@ -37,7 +37,9 @@ TARGET_GIFS = [
     "https://tenor.com/view/megumi-fushiguro-fushi-guro-megumi-fushiguro-mahoraga-gif-92941122665464082",
     "https://tenor.com/view/gojo-geto-suguru-gojo-satoru-kenjaku-prison-realm-gif-5425478000746110355",
     "https://tenor.com/view/killer-queen-bites-the-dust-gif-22628088",
-    "https://tenor.com/view/kokichi-muta-vs-mahito-strong-gif-720433162054802054",
+ 
+"https://tenor.com/view/drake-stealing-gif-7426561037579652441",
+   "https://tenor.com/view/kokichi-muta-vs-mahito-strong-gif-720433162054802054",
     "https://tenor.com/view/dhruv-dhruv-lakdawalla-yuta-yuta-jjk-jujutsu-kaisen-gif-5938354836642012188",
     "https://tenor.com/view/david-martinez-mag-dump-blick-david-blicktinez-cyberpunk-gif-15887120100692089819",
     "https://tenor.com/view/sukuna-mahoraga-feint-cleave-dismantle-gif-13544783209250889853",
@@ -102,7 +104,9 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/jjk-jujutsu-kaisen-yuta-yuta-okkotsu-okkotsu-gif-5353918859104233890",
     "https://tenor.com/view/higuruma-jjk-jujutsu-kaisen-jujutsukaisen-retrial-gif-5462736760420847458",
     "https://tenor.com/view/overwatch-gif-9248765",
-    "https://tenor.com/view/jjk-jujutsu-kaisen-season-2-nobara-kugisaki-itadori-yuji-gif-2211818749172123653",
+
+"https://tenor.com/view/asda-gif-17942224497192232341",
+   "https://tenor.com/view/jjk-jujutsu-kaisen-season-2-nobara-kugisaki-itadori-yuji-gif-2211818749172123653",
     "https://tenor.com/view/lol-gif-23256631",
     "https://tenor.com/view/ohmmm-cartman-gif-10082733958201247483",
     "https://tenor.com/view/thumbs-up-gif-12921332806977950807",

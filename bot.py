@@ -93,7 +93,8 @@ TARGET_GIFS = [
 
 "https://tenor.com/view/sukuna-jujutsu-kaisen-kneel-down-jjk-sukuna-ryomen-gif-17856271175806049937",
  "https://cdn.discordapp.com/attachments/1501576319597674547/1501657404528656454/image0.gif",
-    "https://cdn.discordapp.com/attachments/1460734437485576234/1460734876323152024/image0.gif"
+    "https://cdn.discordapp.com/attachments/1460734437485576234/1460734876323152024/image0.gif",
+    "https://tenor.com/view/osamason-osamason-lazer-tuff-nettspend-pluggnb-gif-781443353793945495"
 ]
 
 UNTIMEOUT_GIFS = [

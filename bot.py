@@ -91,7 +91,8 @@ TARGET_GIFS = [
     "https://cdn.discordapp.com/attachments/1501576319597674547/1501657404528656454/image0.gif",
     "https://cdn.discordapp.com/attachments/1460734437485576234/1460734876323152024/image0.gif",
     "https://tenor.com/view/osamason-osamason-lazer-tuff-nettspend-pluggnb-gif-781443353793945495",
-    "https://tenor.com/view/cockroach-flying-at-you-gif-8185461940091837006"
+    "https://tenor.com/view/cockroach-flying-at-you-gif-8185461940091837006",
+    "https://media.discordapp.net/attachments/1085769531575771159/1202383944872501338/togif.gif"
 ]
 
 UNTIMEOUT_GIFS = [

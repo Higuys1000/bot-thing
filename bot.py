@@ -32,18 +32,15 @@ TARGET_GIFS = [
     "https://tenor.com/view/yuta-yuta-okkotsu-jujutsu-kaisen-jjk-anime-gif-18377052283740449128",
     "https://tenor.com/view/mahito-mechamaru-jujutsu-kaisen-fight-jjk-gif-13293311021769477196",
     "https://tenor.com/view/naoya-jujutsu-kaisen-jujutsu-kaisen-season-3-maki-maki-zenin-gif-13642749527516671169",
- 
-"https://tenor.com/view/fujinvfx-maki-maki-zenin-jujutsu-kaisen-jjk-gif-11607407997389549481",
-
-"https://tenor.com/view/nanami-punch-jujutsu-kaisen-shibuya-3-dontdox-gif-7014352537901038364",
-   "https://tenor.com/view/fnaf-fnaf4-freddy-freddy-fazbear-nightmare-freddy-gif-24525113",
+    "https://tenor.com/view/fujinvfx-maki-maki-zenin-jujutsu-kaisen-jjk-gif-11607407997389549481",
+    "https://tenor.com/view/nanami-punch-jujutsu-kaisen-shibuya-3-dontdox-gif-7014352537901038364",
+    "https://tenor.com/view/fnaf-fnaf4-freddy-freddy-fazbear-nightmare-freddy-gif-24525113",
     "https://tenor.com/view/gojo-gojo-satoru-gojo-season-2-hip-thrust-reaction-gif-10399129046512126318",
     "https://tenor.com/view/megumi-fushiguro-fushi-guro-megumi-fushiguro-mahoraga-gif-92941122665464082",
     "https://tenor.com/view/gojo-geto-suguru-gojo-satoru-kenjaku-prison-realm-gif-5425478000746110355",
     "https://tenor.com/view/killer-queen-bites-the-dust-gif-22628088",
- 
-"https://tenor.com/view/drake-stealing-gif-7426561037579652441",
-   "https://tenor.com/view/kokichi-muta-vs-mahito-strong-gif-720433162054802054",
+    "https://tenor.com/view/drake-stealing-gif-7426561037579652441",
+    "https://tenor.com/view/kokichi-muta-vs-mahito-strong-gif-720433162054802054",
     "https://tenor.com/view/dhruv-dhruv-lakdawalla-yuta-yuta-jjk-jujutsu-kaisen-gif-5938354836642012188",
     "https://tenor.com/view/david-martinez-mag-dump-blick-david-blicktinez-cyberpunk-gif-15887120100692089819",
     "https://tenor.com/view/sukuna-mahoraga-feint-cleave-dismantle-gif-13544783209250889853",
@@ -90,11 +87,11 @@ TARGET_GIFS = [
     "https://tenor.com/view/d9luxe-gif-4267568862040013492",
     "https://tenor.com/view/kinblood-lebron-dunk-gif-12278440",
     "https://tenor.com/view/nanako-gif-366179704676552608",
-
-"https://tenor.com/view/sukuna-jujutsu-kaisen-kneel-down-jjk-sukuna-ryomen-gif-17856271175806049937",
- "https://cdn.discordapp.com/attachments/1501576319597674547/1501657404528656454/image0.gif",
+    "https://tenor.com/view/sukuna-jujutsu-kaisen-kneel-down-jjk-sukuna-ryomen-gif-17856271175806049937",
+    "https://cdn.discordapp.com/attachments/1501576319597674547/1501657404528656454/image0.gif",
     "https://cdn.discordapp.com/attachments/1460734437485576234/1460734876323152024/image0.gif",
-    "https://tenor.com/view/osamason-osamason-lazer-tuff-nettspend-pluggnb-gif-781443353793945495"
+    "https://tenor.com/view/osamason-osamason-lazer-tuff-nettspend-pluggnb-gif-781443353793945495",
+    "https://tenor.com/view/cockroach-flying-at-you-gif-8185461940091837006"
 ]
 
 UNTIMEOUT_GIFS = [

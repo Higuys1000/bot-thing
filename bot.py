@@ -96,7 +96,8 @@ TARGET_GIFS = [
     "https://tenor.com/view/cockroach-flying-at-you-gif-8185461940091837006",
     "https://media.discordapp.net/attachments/1085769531575771159/1202383944872501338/togif.gif",
     "https://cdn.discordapp.com/attachments/1489398429191770252/1489799839116951672/tojirio.gif",
-    "https://tenor.com/view/can-haramba-stop-the-gta-v-plane-harambe-airplane-gorilla-gif-16789079"
+    "https://tenor.com/view/can-haramba-stop-the-gta-v-plane-harambe-airplane-gorilla-gif-16789079",
+    "https://tenor.com/view/megumin-explosion-nice-pic-for-profile-gif-13366421262293691006"
 ]
 
 UNTIMEOUT_GIFS = [

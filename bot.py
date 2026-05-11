@@ -103,7 +103,9 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/doctor-manhattan-watchmen-marvel-gif-21030500",
     "https://klipy.com/gifs/doctor-manhattan-watchmen",
     "https://tenor.com/view/revive-gif-23866294",
-    "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664",
+ 
+"https://cdn.discordapp.com/attachments/1495487069617655828/1502347991887904839/attachment.gif",
+   "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664",
     "https://tenor.com/view/todo-jjk-jujutsu-kaisen-shibuya-arc-mahito-gif-11933159284027340768",
     "https://tenor.com/view/the-boys-homelander-season-5-tung-tung-tung-sahur-tung-tung-sahur-gif-7005128074439649595",
     "https://tenor.com/view/he-has-me-gif-13654467562542512739",

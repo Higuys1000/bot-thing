@@ -98,7 +98,7 @@ TARGET_GIFS = [
     "https://cdn.discordapp.com/attachments/1489398429191770252/1489799839116951672/tojirio.gif",
     "https://tenor.com/view/can-haramba-stop-the-gta-v-plane-harambe-airplane-gorilla-gif-16789079",
     "https://tenor.com/view/megumin-explosion-nice-pic-for-profile-gif-13366421262293691006",
-    "https://tenor.com/view/megumi-kirara-kirara-hoshi-jujutsu-kaisen-megumi-fushiguro-gif-18151328602197879806".
+    "https://tenor.com/view/megumi-kirara-kirara-hoshi-jujutsu-kaisen-megumi-fushiguro-gif-18151328602197879806",
     "https://tenor.com/view/jujutsu-kaisen-megumi-fushiguro-chizuru-hari-falling-crash-gif-6810573746992728455"
 ]
 

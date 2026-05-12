@@ -1873,21 +1873,6 @@ async def on_message(message):
 
 
 @bot.event
-async def on_reaction_add(reaction, user):
-    if user.bot:
-        return
-    emoji_map = {
-        "\U0001fac3": "MPREG",
-        "\U0001f930": "WPREG",
-        "\U0001f9d1\u200d\U0001f37c": "PREG"
-    }
-    if str(reaction.emoji) in emoji_map:
-        await reaction.message.channel.send(
-            f"{user.mention} JUST USED {emoji_map[str(reaction.emoji)]} EMOJI GO KILL THEM"
-        )
-
-
-@bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return

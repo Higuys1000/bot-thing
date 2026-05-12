@@ -22,6 +22,8 @@ TARGET_GIFS = [
     "https://tenor.com/view/jujutsu-kaisen-inumaki-toge-toge-inumaki-inumaki-toge-gif-2839387565091272519",
     "https://klipy.com/gifs/drmanhattan-watchman",
  
+"https://tenor.com/view/not-very-woke-of-you-nuh-uh-homelander-gen-v-the-boys-gif-5949428463441363002",
+
 "https://tenor.com/view/vb-dragon-ball-super-finalkamehameha-power-anime-gif-17694754",
    "https://klipy.com/gifs/blue-lock-gagamaru",
  

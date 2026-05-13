@@ -32,9 +32,7 @@ TARGET_GIFS = [
     "https://tenor.com/view/jjk-jjk-s2-jjk-season-2-jujutsu-kaisen-jujutsu-kaisen-season-2-gif-2446260417043491971",
     "https://tenor.com/view/joe-swanson-gets-sent-to-the-shadow-realm-gif-12569580727382074039",
     "https://tenor.com/view/avatar-eyes-mark-philips-rdcworld1-i-have-awoken-rdc-gif-11037312579902835094",
- 
-"https://tenor.com/view/chartadori-yuji-car-yuji-itadori-yuji-itadori-gif-14657869085478059979",
-   "https://tenor.com/view/xenoverse-goku-super-saiyan-angry-dbz-gif-1416275111944307575",
+    "https://tenor.com/view/xenoverse-goku-super-saiyan-angry-dbz-gif-1416275111944307575",
     "https://tenor.com/view/yuta-yuta-okkotsu-jujutsu-kaisen-jjk-anime-gif-18377052283740449128",
     "https://tenor.com/view/mahito-mechamaru-jujutsu-kaisen-fight-jjk-gif-13293311021769477196",
     "https://tenor.com/view/naoya-jujutsu-kaisen-jujutsu-kaisen-season-3-maki-maki-zenin-gif-13642749527516671169",
@@ -499,19 +497,95 @@ async def run_gif_setup_session(ctx_or_interaction, guild: discord.Guild, user: 
             current = get_kill_gifs(guild.id) if gif_type == "kill" else get_save_gifs(guild.id)
             if not current:
                 await channel.send("No GIFs configured.")
-            else:
-                lines = [f"{i+1}. {url}" for i, url in enumerate(current)]
-                chunks, chunk = [], ""
-                for line in lines:
-                    if len(chunk) + len(line) + 1 > 1900:
-                        chunks.append(chunk)
-                        chunk = line
+                continue
+
+            PAGE_SIZE = 5
+            total_pages = (len(current) + PAGE_SIZE - 1) // PAGE_SIZE
+            page = 0
+
+            def build_page(p: int) -> str:
+                start = p * PAGE_SIZE
+                end = start + PAGE_SIZE
+                lines = [f"{start + j + 1}. {current[start + j]}" for j in range(min(PAGE_SIZE, len(current) - start))]
+                return (
+                    f"**{gif_type.capitalize()} GIFs — page {p + 1}/{total_pages} ({len(current)} total):**\n"
+                    + "\n".join(lines)
+                    + (f"\n\nType `next` for the next page, or anything else to continue setup." if p + 1 < total_pages else f"\n\n*(end of list)* Type anything to continue setup.")
+                )
+
+            list_msg = await channel.send(build_page(page))
+
+            # Inner pagination loop — keep consuming "next" until they send something else
+            while page + 1 < total_pages:
+                try:
+                    next_msg = await bot.wait_for("message", timeout=120.0, check=check)
+                except asyncio.TimeoutError:
+                    active_setup_sessions.pop(session_key, None)
+                    await channel.send(f"⏱️ {gif_type.capitalize()} GIF setup timed out. No changes were saved.")
+                    return
+
+                if next_msg.content.strip().lower() == "next":
+                    page += 1
+                    await list_msg.edit(content=build_page(page))
+                    # If we just showed the last page, break out so the outer loop
+                    # can pick up their next real message naturally
+                    if page + 1 >= total_pages:
+                        break
+                else:
+                    # They sent something that isn't "next" — put it back into the
+                    # outer loop by re-processing it as if it were a fresh message.
+                    # We do this by jumping to the top of the outer loop manually.
+                    text = next_msg.content.strip()
+
+                    # ---- re-run the outer loop body for this text ----
+                    if text.lower() == "cancel":
+                        active_setup_sessions.pop(session_key, None)
+                        await channel.send(f"❌ {gif_type.capitalize()} GIF setup cancelled. No changes were saved.")
+                        return
+
+                    if text.lower() == "clear":
+                        try:
+                            redis.delete(f"gifs:{guild.id}:{gif_type}")
+                        except Exception as e:
+                            print(f"[gifs] Redis delete {gif_type} failed for {guild.id}: {e}")
+                        active_setup_sessions.pop(session_key, None)
+                        await channel.send(f"🗑️ Cleared custom {gif_type} GIFs for this server. Reverted to global defaults.")
+                        return
+
+                    if text.lower() == "done":
+                        if not new_gifs:
+                            active_setup_sessions.pop(session_key, None)
+                            await channel.send(f"❌ No new GIFs were added. Setup cancelled.")
+                            return
+                        base = existing_custom_raw if existing_custom_raw else []
+                        combined = base + [g for g in new_gifs if g not in base]
+                        if gif_type == "kill":
+                            save_kill_gifs(guild.id, combined)
+                        else:
+                            save_save_gifs(guild.id, combined)
+                        active_setup_sessions.pop(session_key, None)
+                        await channel.send(
+                            f"✅ Saved **{len(new_gifs)}** new {gif_type} GIF(s). "
+                            f"Server total: **{len(combined)}** {gif_type} GIF(s)."
+                        )
+                        return
+
+                    if text.lower() == "list":
+                        # They asked for list again mid-pagination; restart pagination
+                        page = 0
+                        list_msg = await channel.send(build_page(page))
+                        continue
+
+                    url = text
+                    if not (url.startswith("http://") or url.startswith("https://")):
+                        await channel.send("⚠️ That doesn't look like a valid URL. Send a GIF link, or type `done` / `cancel`.")
+                    elif url in new_gifs:
+                        await channel.send("⚠️ Already added that GIF this session. Send another or type `done`.")
                     else:
-                        chunk = (chunk + "\n" + line).strip()
-                if chunk:
-                    chunks.append(chunk)
-                for i, c in enumerate(chunks):
-                    await channel.send(f"**{gif_type.capitalize()} GIFs ({i+1}/{len(chunks)}):**\n{c}")
+                        new_gifs.append(url)
+                        await channel.send(f"✅ Added! ({len(new_gifs)} new this session) — send another or type `done`.")
+                    break  # exit pagination inner loop, continue outer loop
+
             continue
 
         if text.lower() == "done":

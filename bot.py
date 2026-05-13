@@ -151,6 +151,13 @@ CLASH_GIFS = [
     "https://tenor.com/view/jujutsu-kaisen-yuta-ryu-okkotsu-fight-gif-10244605119238677045",
 ]
 
+CLASH_GIFS_GMM = [
+    "https://tenor.com/view/gojo-domain-expansion-gif-19197982",
+    "https://tenor.com/view/josuke-higashikata-josuke-crazy-diamond-stando-jotaro-gif-26746962",
+    "https://tenor.com/view/ichigo-kurosaki-aizen-vs-ichigo-bleach-gif-14055522",
+    "https://tenor.com/view/baki-slap-baki-slap-gif-2511379337117214059",
+]
+
 MIRACLE_BLOCK_GIF = "https://cdn.discordapp.com/attachments/1395472869991121078/1497282590267281448/runningtrue.gif"
 
 CLASH_WINDOW_SECONDS = 5

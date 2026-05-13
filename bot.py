@@ -1323,7 +1323,7 @@ def build_help_embed(guild_id: int) -> discord.Embed:
         name="Commands",
         value=(
             "`!help` — show this message\n"
-            "`!bindingvows` — show all Binding Vow descriptions\n"
+            "`!vows` — show all Binding Vow descriptions\n"
             "`!vote` — get the vote link for a 25% cooldown discount\n"
             "`@bot` or `!cooldown [@user]` — check your (or someone else's) cooldown\n"
             "`!resetcooldown @user [kill|save|both]` — reset a cooldown *(mods only)*\n"
@@ -1400,8 +1400,8 @@ async def prefix_help(ctx):
     await ctx.send(embed=build_help_embed(ctx.guild.id))
 
 
-@bot.command(name="bindingvows")
-async def prefix_bindingvows(ctx):
+@bot.command(name="vows")
+async def prefix_vows(ctx):
     await ctx.send(embed=build_binding_vows_embed())
 
 
@@ -1508,8 +1508,8 @@ async def slash_help(interaction: discord.Interaction):
     await interaction.response.send_message(embed=build_help_embed(interaction.guild_id))
 
 
-@bot.tree.command(name="bindingvows", description="Show all Binding Vow descriptions")
-async def slash_bindingvows(interaction: discord.Interaction):
+@bot.tree.command(name="vows", description="Show all Binding Vow descriptions")
+async def slash_vows(interaction: discord.Interaction):
     await interaction.response.send_message(embed=build_binding_vows_embed())
 
 

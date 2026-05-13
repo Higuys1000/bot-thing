@@ -109,9 +109,8 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/doctor-manhattan-watchmen-marvel-gif-21030500",
     "https://klipy.com/gifs/doctor-manhattan-watchmen",
     "https://tenor.com/view/revive-gif-23866294",
- 
-"https://cdn.discordapp.com/attachments/1495487069617655828/1502347991887904839/attachment.gif",
-   "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664",
+    "https://cdn.discordapp.com/attachments/1495487069617655828/1502347991887904839/attachment.gif",
+    "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664",
     "https://tenor.com/view/todo-jjk-jujutsu-kaisen-shibuya-arc-mahito-gif-11933159284027340768",
     "https://tenor.com/view/the-boys-homelander-season-5-tung-tung-tung-sahur-tung-tung-sahur-gif-7005128074439649595",
     "https://tenor.com/view/he-has-me-gif-13654467562542512739",
@@ -119,9 +118,8 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/jjk-jujutsu-kaisen-yuta-yuta-okkotsu-okkotsu-gif-5353918859104233890",
     "https://tenor.com/view/higuruma-jjk-jujutsu-kaisen-jujutsukaisen-retrial-gif-5462736760420847458",
     "https://tenor.com/view/overwatch-gif-9248765",
-
-"https://tenor.com/view/asda-gif-17942224497192232341",
-   "https://tenor.com/view/jjk-jujutsu-kaisen-season-2-nobara-kugisaki-itadori-yuji-gif-2211818749172123653",
+    "https://tenor.com/view/asda-gif-17942224497192232341",
+    "https://tenor.com/view/jjk-jujutsu-kaisen-season-2-nobara-kugisaki-itadori-yuji-gif-2211818749172123653",
     "https://tenor.com/view/lol-gif-23256631",
     "https://tenor.com/view/ohmmm-cartman-gif-10082733958201247483",
     "https://tenor.com/view/thumbs-up-gif-12921332806977950807",
@@ -139,8 +137,7 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/omni-man-sad-invincible-gif-9211102013467947727",
     "https://tenor.com/view/mercy-overwatch-come-here-gif-14280244",
     "https://tenor.com/view/lamelo-ball-lamelo-zesty-gif-3374658710119383750",
-
-"https://cdn.discordapp.com/attachments/1501576319597674547/1501657150697771100/image0.gif",
+    "https://cdn.discordapp.com/attachments/1501576319597674547/1501657150697771100/image0.gif",
     "https://tenor.com/view/storm-rain-raining-gif-12250202288703677838",
     "https://tenor.com/view/death-of-the-self-gay-fluff-shigadeku-shigaraki-deku-gif-24033047",
     "https://tenor.com/view/gay-anime-anime-gay-gif-18237425560170880188"
@@ -215,7 +212,6 @@ server_settings: dict[int, dict] = {}
 
 # =========================
 # VOTE SYSTEM
-# vote_timestamps stays global — a vote applies across all servers
 # =========================
 
 VOTE_WEBHOOK_PORT = int(os.getenv("PORT", os.getenv("VOTE_WEBHOOK_PORT", "5000")))
@@ -250,7 +246,6 @@ def apply_vote_discount(hours: float, user_id: int) -> float:
 
 
 def load_server_settings() -> dict:
-    # Try Redis first
     try:
         raw = redis.get("server_settings")
         if raw:
@@ -259,7 +254,6 @@ def load_server_settings() -> dict:
             return {int(k): v for k, v in data.items()}
     except Exception as e:
         print(f"[server_settings] Redis load failed: {e}")
-    # Fall back to local file
     if os.path.exists(SERVER_SETTINGS_FILE):
         with open(SERVER_SETTINGS_FILE, "r") as f:
             raw = json.load(f)
@@ -289,10 +283,7 @@ def get_default_role(guild_id: int) -> int | None:
 
 
 # =========================
-# COOLDOWN PERSISTENCE (Redis)
-# Keys are "guild_id:user_id" strings for per-server separation.
-# vote_timestamps, miracle_counts, miracle_gain_cooldown, ragebait_last_used,
-# random_vow_cds, and stack_vow_charges are also keyed per-server.
+# REDIS + COOLDOWN PERSISTENCE
 # =========================
 
 from upstash_redis import Redis
@@ -302,7 +293,6 @@ redis = Redis(
     token=os.getenv("UPSTASH_REDIS_REST_TOKEN")
 )
 
-# All per-server cooldown dicts: key = (guild_id, user_id)
 last_kill_used: dict[tuple[int, int], datetime] = {}
 last_save_used: dict[tuple[int, int], datetime] = {}
 miracle_counts: dict[tuple[int, int], int] = {}
@@ -311,11 +301,8 @@ ragebait_last_used: dict[tuple[int, int], datetime] = {}
 random_vow_cds: dict[tuple[int, int], dict[str, float | None]] = {}
 stack_vow_charges: dict[tuple[int, int], dict[str, list[datetime]]] = {}
 
-# vote_timestamps stays global (a vote applies everywhere)
-
 
 def _gk(guild_id: int, user_id: int) -> str:
-    """Encode a (guild_id, user_id) pair as a storable string key."""
     return f"{guild_id}:{user_id}"
 
 
@@ -381,6 +368,183 @@ def save_cooldowns():
         redis.set("cooldowns", json.dumps(data))
     except Exception as e:
         print(f"[cooldowns] Failed to save to Redis: {e}")
+
+
+# =========================
+# PER-SERVER GIF LISTS
+# =========================
+
+def get_kill_gifs(guild_id: int) -> list[str]:
+    """Return this server's custom kill GIF list, or the global default."""
+    try:
+        raw = redis.get(f"gifs:{guild_id}:kill")
+        if raw:
+            data = json.loads(raw)
+            if data:
+                return data
+    except Exception as e:
+        print(f"[gifs] Redis get kill gifs failed for {guild_id}: {e}")
+    return TARGET_GIFS
+
+
+def get_save_gifs(guild_id: int) -> list[str]:
+    """Return this server's custom save GIF list, or the global default."""
+    try:
+        raw = redis.get(f"gifs:{guild_id}:save")
+        if raw:
+            data = json.loads(raw)
+            if data:
+                return data
+    except Exception as e:
+        print(f"[gifs] Redis get save gifs failed for {guild_id}: {e}")
+    return UNTIMEOUT_GIFS
+
+
+def save_kill_gifs(guild_id: int, gifs: list[str]):
+    try:
+        redis.set(f"gifs:{guild_id}:kill", json.dumps(gifs))
+    except Exception as e:
+        print(f"[gifs] Redis save kill gifs failed for {guild_id}: {e}")
+
+
+def save_save_gifs(guild_id: int, gifs: list[str]):
+    try:
+        redis.set(f"gifs:{guild_id}:save", json.dumps(gifs))
+    except Exception as e:
+        print(f"[gifs] Redis save save gifs failed for {guild_id}: {e}")
+
+
+async def run_gif_setup_session(ctx_or_interaction, guild: discord.Guild, user: discord.Member, channel, gif_type: str):
+    """
+    Interactive session for mods to add kill or save GIFs.
+    gif_type: "kill" or "save"
+    """
+    session_key = f"{user.id}:gif:{gif_type}"
+    if session_key in active_setup_sessions:
+        msg = f"You already have an active {gif_type} GIF setup session. Type `done` to finish it or `cancel` to abort."
+        if isinstance(ctx_or_interaction, discord.Interaction):
+            await ctx_or_interaction.response.send_message(msg, ephemeral=True)
+        else:
+            await channel.send(msg)
+        return
+
+    active_setup_sessions[session_key] = guild.id
+
+    # Check if server has a custom list already
+    existing_custom_raw = None
+    try:
+        raw = redis.get(f"gifs:{guild.id}:{gif_type}")
+        if raw:
+            existing_custom_raw = json.loads(raw)
+    except Exception:
+        pass
+
+    current_count = len(existing_custom_raw) if existing_custom_raw else 0
+    source_label = (
+        f"*(server has {current_count} custom GIF(s))*"
+        if existing_custom_raw
+        else "*(using global defaults)*"
+    )
+
+    intro = (
+        f"**🎞️ {gif_type.capitalize()} GIF Setup**\n\n"
+        f"Send one GIF link per message to add it to this server's **{gif_type}** GIF list.\n"
+        f"Supported: Tenor, Klipy, Discord CDN, or any direct `.gif` URL.\n\n"
+        f"**Commands:**\n"
+        f"- `clear` — wipe this server's custom list and revert to global defaults\n"
+        f"- `list` — show the current GIFs saved for this server\n"
+        f"- `done` — save all added GIFs and finish\n"
+        f"- `cancel` — abort without saving\n\n"
+        f"**Current status:** {source_label}\n"
+        f"You have **2 minutes** per message before the session times out."
+    )
+
+    if isinstance(ctx_or_interaction, discord.Interaction):
+        await ctx_or_interaction.response.send_message(intro)
+    else:
+        await channel.send(intro)
+
+    new_gifs: list[str] = []
+
+    def check(m):
+        return m.author.id == user.id and m.channel.id == channel.id
+
+    while True:
+        try:
+            msg = await bot.wait_for("message", timeout=120.0, check=check)
+        except asyncio.TimeoutError:
+            active_setup_sessions.pop(session_key, None)
+            await channel.send(f"⏱️ {gif_type.capitalize()} GIF setup timed out. No changes were saved.")
+            return
+
+        text = msg.content.strip()
+
+        if text.lower() == "cancel":
+            active_setup_sessions.pop(session_key, None)
+            await channel.send(f"❌ {gif_type.capitalize()} GIF setup cancelled. No changes were saved.")
+            return
+
+        if text.lower() == "clear":
+            try:
+                redis.delete(f"gifs:{guild.id}:{gif_type}")
+            except Exception as e:
+                print(f"[gifs] Redis delete {gif_type} failed for {guild.id}: {e}")
+            active_setup_sessions.pop(session_key, None)
+            await channel.send(f"🗑️ Cleared custom {gif_type} GIFs for this server. Reverted to global defaults.")
+            return
+
+        if text.lower() == "list":
+            current = get_kill_gifs(guild.id) if gif_type == "kill" else get_save_gifs(guild.id)
+            if not current:
+                await channel.send("No GIFs configured.")
+            else:
+                lines = [f"{i+1}. {url}" for i, url in enumerate(current)]
+                chunks, chunk = [], ""
+                for line in lines:
+                    if len(chunk) + len(line) + 1 > 1900:
+                        chunks.append(chunk)
+                        chunk = line
+                    else:
+                        chunk = (chunk + "\n" + line).strip()
+                if chunk:
+                    chunks.append(chunk)
+                for i, c in enumerate(chunks):
+                    await channel.send(f"**{gif_type.capitalize()} GIFs ({i+1}/{len(chunks)}):**\n{c}")
+            continue
+
+        if text.lower() == "done":
+            if not new_gifs:
+                active_setup_sessions.pop(session_key, None)
+                await channel.send(f"❌ No new GIFs were added. Setup cancelled.")
+                return
+            # Merge with existing custom list — don't wipe what's already there
+            base = existing_custom_raw if existing_custom_raw else []
+            combined = base + [g for g in new_gifs if g not in base]
+            if gif_type == "kill":
+                save_kill_gifs(guild.id, combined)
+            else:
+                save_save_gifs(guild.id, combined)
+            active_setup_sessions.pop(session_key, None)
+            await channel.send(
+                f"✅ Saved **{len(new_gifs)}** new {gif_type} GIF(s). "
+                f"Server total: **{len(combined)}** {gif_type} GIF(s)."
+            )
+            return
+
+        # Validate URL
+        url = text
+        if not (url.startswith("http://") or url.startswith("https://")):
+            await channel.send(
+                "⚠️ That doesn't look like a valid URL. Send a GIF link, or type `done` / `cancel`."
+            )
+            continue
+
+        if url in new_gifs:
+            await channel.send("⚠️ Already added that GIF this session. Send another or type `done`.")
+            continue
+
+        new_gifs.append(url)
+        await channel.send(f"✅ Added! ({len(new_gifs)} new this session) — send another or type `done`.")
 
 
 # =========================
@@ -468,7 +632,7 @@ def format_vow_label(vow_name: str | None) -> str:
 
 
 # =========================
-# STACK VOW HELPERS  (guild_id, user_id) keyed
+# STACK VOW HELPERS
 # =========================
 
 def _get_active_charge_timestamps(guild_id: int, user_id: int, action: str, cd_hours: float, now: datetime) -> list[datetime]:
@@ -980,7 +1144,9 @@ def build_help_embed(guild_id: int) -> discord.Embed:
             "`/resetcooldown @user [kill|save|both]` — reset a user's cooldown *(mods only)*\n"
             "`/cooldowns [hours]` or `!cooldowns [hours]` — view or set the default cooldown *(mods only)*\n"
             "`/setdefaultrole [@role]` — set the role needed to use GIFs *(mods only)*\n"
-            "`/cleardefaultrole` — remove the role requirement *(mods only)*"
+            "`/cleardefaultrole` — remove the role requirement *(mods only)*\n"
+            "`/addkillgifs` or `!addkillgifs` — add/manage kill GIFs for this server *(mods only)*\n"
+            "`/addsavegifs` or `!addsavegifs` — add/manage save GIFs for this server *(mods only)*"
         ),
         inline=False
     )
@@ -1140,6 +1306,22 @@ async def prefix_setdefaultrole(ctx, *, role_input: str = None):
     await ctx.send(f"✅ Default GIF role set to **{role.name}**.")
 
 
+@bot.command(name="addkillgifs")
+async def prefix_addkillgifs(ctx):
+    if not ctx.author.guild_permissions.manage_roles and not ctx.author.guild_permissions.manage_guild:
+        await ctx.send(f"{ctx.author.mention}, you need Manage Roles permission to do that.")
+        return
+    await run_gif_setup_session(ctx, ctx.guild, ctx.author, ctx.channel, "kill")
+
+
+@bot.command(name="addsavegifs")
+async def prefix_addsavegifs(ctx):
+    if not ctx.author.guild_permissions.manage_roles and not ctx.author.guild_permissions.manage_guild:
+        await ctx.send(f"{ctx.author.mention}, you need Manage Roles permission to do that.")
+        return
+    await run_gif_setup_session(ctx, ctx.guild, ctx.author, ctx.channel, "save")
+
+
 # =========================
 # SLASH COMMANDS
 # =========================
@@ -1260,6 +1442,22 @@ async def slash_cleardefaultrole(interaction: discord.Interaction):
         server_settings[interaction.guild_id].pop("default_role_id", None)
         save_server_settings()
     await interaction.response.send_message("✅ Role requirement cleared.")
+
+
+@bot.tree.command(name="addkillgifs", description="Add or manage kill GIFs for this server (mods only)")
+async def slash_addkillgifs(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_roles and not interaction.user.guild_permissions.manage_guild:
+        await interaction.response.send_message("You need Manage Roles permission to do that.", ephemeral=True)
+        return
+    await run_gif_setup_session(interaction, interaction.guild, interaction.user, interaction.channel, "kill")
+
+
+@bot.tree.command(name="addsavegifs", description="Add or manage save GIFs for this server (mods only)")
+async def slash_addsavegifs(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_roles and not interaction.user.guild_permissions.manage_guild:
+        await interaction.response.send_message("You need Manage Roles permission to do that.", ephemeral=True)
+        return
+    await run_gif_setup_session(interaction, interaction.guild, interaction.user, interaction.channel, "save")
 
 
 # =========================
@@ -1523,8 +1721,8 @@ async def on_message(message):
         return
 
     content = message.content
-    is_kill_gif = any(gif in content for gif in TARGET_GIFS)
-    is_save_gif = any(gif in content for gif in UNTIMEOUT_GIFS)
+    is_kill_gif = any(gif in content for gif in get_kill_gifs(gid))
+    is_save_gif = any(gif in content for gif in get_save_gifs(gid))
 
     # =========================
     # CLASH JOIN CHECK

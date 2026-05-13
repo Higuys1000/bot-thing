@@ -151,13 +151,6 @@ CLASH_GIFS = [
     "https://tenor.com/view/jujutsu-kaisen-yuta-ryu-okkotsu-fight-gif-10244605119238677045",
 ]
 
-CLASH_GIFS_GMM = [
-    "https://tenor.com/view/gojo-domain-expansion-gif-19197982",
-    "https://tenor.com/view/josuke-higashikata-josuke-crazy-diamond-stando-jotaro-gif-26746962",
-    "https://tenor.com/view/ichigo-kurosaki-aizen-vs-ichigo-bleach-gif-14055522",
-    "https://tenor.com/view/baki-slap-baki-slap-gif-2511379337117214059",
-]
-
 MIRACLE_BLOCK_GIF = "https://cdn.discordapp.com/attachments/1395472869991121078/1497282590267281448/runningtrue.gif"
 
 CLASH_WINDOW_SECONDS = 5
@@ -844,17 +837,6 @@ def get_clash_tickets(member_roles: list[str], guild_id: int) -> int:
 def resolve_clash(attacker_tickets: int, defender_tickets: int) -> bool:
     total = attacker_tickets + defender_tickets
     return random.randint(1, total) <= attacker_tickets
-
-
-def pick_clash_gif(all_roles: list[list[str]]) -> str:
-    for roles in all_roles:
-        if GMM_ROLE in roles:
-            return random.choice(CLASH_GIFS_GMM)
-    return random.choice(CLASH_GIFS)
-
-
-def any_gmm(all_roles: list[list[str]]) -> bool:
-    return any(GMM_ROLE in roles for roles in all_roles)
 
 
 async def log_error(guild, label: str, error: Exception):

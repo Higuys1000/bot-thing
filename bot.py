@@ -636,9 +636,9 @@ async def run_gif_setup_session(ctx_or_interaction, guild: discord.Guild, user: 
 
 BINDING_VOWS = {
     "Destruction Vow": {
-        "kill_multiplier": 3.0,
-        "save_multiplier": 1.0,
-        "description": "Kill CDs ×3",
+        "kill_multiplier": 2.0,
+        "save_multiplier": None,
+        "description": "Kill CDs ×2, deal 270s timeout. Cannot save anyone.",
     },
     "Healing Vow": {
         "kill_multiplier": None,
@@ -2111,7 +2111,7 @@ async def on_message(message):
             await bot.process_commands(message)
             return
 
-        timeout_duration = 180 if vow == "Destruction Vow" else TIMEOUT_SECONDS
+        timeout_duration = 270 if vow == "Destruction Vow" else TIMEOUT_SECONDS
 
         if vow == "Random Vow":
             last_kill_used[(gid, uid)] = now

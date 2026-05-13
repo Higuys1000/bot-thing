@@ -505,18 +505,24 @@ async def run_gif_setup_session(ctx_or_interaction, guild: discord.Guild, user: 
 
             def build_page(p: int) -> str:
                 start = p * PAGE_SIZE
-                end = start + PAGE_SIZE
                 lines = [f"{start + j + 1}. {current[start + j]}" for j in range(min(PAGE_SIZE, len(current) - start))]
+                nav_hints = []
+                if p > 0:
+                    nav_hints.append("`back`")
+                if p + 1 < total_pages:
+                    nav_hints.append("`next`")
+                nav_str = " · ".join(nav_hints) if nav_hints else "*(only page)*"
+                footer = f"\n\nNavigate: {nav_str} — or type anything else to continue setup."
                 return (
                     f"**{gif_type.capitalize()} GIFs — page {p + 1}/{total_pages} ({len(current)} total):**\n"
                     + "\n".join(lines)
-                    + (f"\n\nType `next` for the next page, or anything else to continue setup." if p + 1 < total_pages else f"\n\n*(end of list)* Type anything to continue setup.")
+                    + footer
                 )
 
             list_msg = await channel.send(build_page(page))
 
-            # Inner pagination loop — keep consuming "next" until they send something else
-            while page + 1 < total_pages:
+            # Inner pagination loop
+            while True:
                 try:
                     next_msg = await bot.wait_for("message", timeout=120.0, check=check)
                 except asyncio.TimeoutError:
@@ -524,67 +530,68 @@ async def run_gif_setup_session(ctx_or_interaction, guild: discord.Guild, user: 
                     await channel.send(f"⏱️ {gif_type.capitalize()} GIF setup timed out. No changes were saved.")
                     return
 
-                if next_msg.content.strip().lower() == "next":
+                nav = next_msg.content.strip().lower()
+
+                if nav == "next" and page + 1 < total_pages:
                     page += 1
                     await list_msg.edit(content=build_page(page))
-                    # If we just showed the last page, break out so the outer loop
-                    # can pick up their next real message naturally
-                    if page + 1 >= total_pages:
-                        break
-                else:
-                    # They sent something that isn't "next" — put it back into the
-                    # outer loop by re-processing it as if it were a fresh message.
-                    # We do this by jumping to the top of the outer loop manually.
-                    text = next_msg.content.strip()
+                    continue
 
-                    # ---- re-run the outer loop body for this text ----
-                    if text.lower() == "cancel":
+                if nav == "back" and page > 0:
+                    page -= 1
+                    await list_msg.edit(content=build_page(page))
+                    continue
+
+                # Not a nav command — fall through to outer loop processing
+                text = next_msg.content.strip()
+
+                if text.lower() == "cancel":
+                    active_setup_sessions.pop(session_key, None)
+                    await channel.send(f"❌ {gif_type.capitalize()} GIF setup cancelled. No changes were saved.")
+                    return
+
+                if text.lower() == "clear":
+                    try:
+                        redis.delete(f"gifs:{guild.id}:{gif_type}")
+                    except Exception as e:
+                        print(f"[gifs] Redis delete {gif_type} failed for {guild.id}: {e}")
+                    active_setup_sessions.pop(session_key, None)
+                    await channel.send(f"🗑️ Cleared custom {gif_type} GIFs for this server. Reverted to global defaults.")
+                    return
+
+                if text.lower() == "done":
+                    if not new_gifs:
                         active_setup_sessions.pop(session_key, None)
-                        await channel.send(f"❌ {gif_type.capitalize()} GIF setup cancelled. No changes were saved.")
+                        await channel.send(f"❌ No new GIFs were added. Setup cancelled.")
                         return
-
-                    if text.lower() == "clear":
-                        try:
-                            redis.delete(f"gifs:{guild.id}:{gif_type}")
-                        except Exception as e:
-                            print(f"[gifs] Redis delete {gif_type} failed for {guild.id}: {e}")
-                        active_setup_sessions.pop(session_key, None)
-                        await channel.send(f"🗑️ Cleared custom {gif_type} GIFs for this server. Reverted to global defaults.")
-                        return
-
-                    if text.lower() == "done":
-                        if not new_gifs:
-                            active_setup_sessions.pop(session_key, None)
-                            await channel.send(f"❌ No new GIFs were added. Setup cancelled.")
-                            return
-                        base = existing_custom_raw if existing_custom_raw else []
-                        combined = base + [g for g in new_gifs if g not in base]
-                        if gif_type == "kill":
-                            save_kill_gifs(guild.id, combined)
-                        else:
-                            save_save_gifs(guild.id, combined)
-                        active_setup_sessions.pop(session_key, None)
-                        await channel.send(
-                            f"✅ Saved **{len(new_gifs)}** new {gif_type} GIF(s). "
-                            f"Server total: **{len(combined)}** {gif_type} GIF(s)."
-                        )
-                        return
-
-                    if text.lower() == "list":
-                        # They asked for list again mid-pagination; restart pagination
-                        page = 0
-                        list_msg = await channel.send(build_page(page))
-                        continue
-
-                    url = text
-                    if not (url.startswith("http://") or url.startswith("https://")):
-                        await channel.send("⚠️ That doesn't look like a valid URL. Send a GIF link, or type `done` / `cancel`.")
-                    elif url in new_gifs:
-                        await channel.send("⚠️ Already added that GIF this session. Send another or type `done`.")
+                    base = existing_custom_raw if existing_custom_raw else []
+                    combined = base + [g for g in new_gifs if g not in base]
+                    if gif_type == "kill":
+                        save_kill_gifs(guild.id, combined)
                     else:
-                        new_gifs.append(url)
-                        await channel.send(f"✅ Added! ({len(new_gifs)} new this session) — send another or type `done`.")
-                    break  # exit pagination inner loop, continue outer loop
+                        save_save_gifs(guild.id, combined)
+                    active_setup_sessions.pop(session_key, None)
+                    await channel.send(
+                        f"✅ Saved **{len(new_gifs)}** new {gif_type} GIF(s). "
+                        f"Server total: **{len(combined)}** {gif_type} GIF(s)."
+                    )
+                    return
+
+                if text.lower() == "list":
+                    # Re-open list from page 0 with a fresh message
+                    page = 0
+                    list_msg = await channel.send(build_page(page))
+                    continue
+
+                url = text
+                if not (url.startswith("http://") or url.startswith("https://")):
+                    await channel.send("⚠️ That doesn't look like a valid URL. Send a GIF link, or type `done` / `cancel`.")
+                elif url in new_gifs:
+                    await channel.send("⚠️ Already added that GIF this session. Send another or type `done`.")
+                else:
+                    new_gifs.append(url)
+                    await channel.send(f"✅ Added! ({len(new_gifs)} new this session) — send another or type `done`.")
+                break  # exit pagination inner loop, back to outer loop
 
             continue
 
@@ -905,98 +912,206 @@ async def try_untimeout(member: discord.Member, channel: discord.TextChannel, la
 def build_setup_summary(guild_id: int) -> str:
     raw = server_settings.get(guild_id, {}).get("role_cooldowns", None)
     tickets_raw = server_settings.get(guild_id, {}).get("clash_tickets", None)
+    default_cd = get_default_cooldown(guild_id)
+    default_role_id = get_default_role(guild_id)
+    default_role_str = f"role ID {default_role_id}" if default_role_id else "none (everyone)"
+    header = f"**Default cooldown:** {default_cd}h\n**Default role required:** {default_role_str}\n\n"
     if not raw:
         lines = [f"**{name}**: {cd}h CD, {DEFAULT_CLASH_TICKETS.get(name, 1)} tickets"
                  for name, cd in DEFAULT_ROLE_COOLDOWNS.items()]
-        return "*(using defaults)*\n" + "\n".join(lines)
+        return header + "**Role config** *(using defaults)*:\n" + "\n".join(lines)
     lines = []
     for role_name, data in raw.items():
         role_id, cd = data
         tickets = (tickets_raw or {}).get(role_name, 1)
-        lines.append(f"<@&{role_id}> ({role_name}): **{cd}h** CD, **{tickets}** tickets")
-    return "\n".join(lines) if lines else "No roles configured."
+        lines.append(f"`{role_name}`: **{cd}h** CD, **{tickets}** tickets")
+    role_block = "\n".join(lines) if lines else "No roles configured."
+    return header + "**Role config:**\n" + role_block
 
 
-async def run_setup_session(ctx_or_interaction, guild: discord.Guild, user: discord.Member, channel):
-    if user.id in active_setup_sessions:
-        msg = "You already have an active setup session. Type `done` to finish it or `cancel` to abort."
+def build_setup_summary_with_guild(guild: discord.Guild) -> str:
+    guild_id = guild.id
+    raw = server_settings.get(guild_id, {}).get("role_cooldowns", None)
+    tickets_raw = server_settings.get(guild_id, {}).get("clash_tickets", None)
+    default_cd = get_default_cooldown(guild_id)
+    default_role_id = get_default_role(guild_id)
+    default_role_obj = guild.get_role(default_role_id) if default_role_id else None
+    default_role_str = f"`{default_role_obj.name}`" if default_role_obj else "none (everyone)"
+    header = f"**Default cooldown:** {default_cd}h\n**Default role required:** {default_role_str}\n\n"
+    if not raw:
+        lines = [f"**{name}**: {cd}h CD, {DEFAULT_CLASH_TICKETS.get(name, 1)} tickets"
+                 for name, cd in DEFAULT_ROLE_COOLDOWNS.items()]
+        return header + "**Role config** *(using defaults)*:\n" + "\n".join(lines)
+    lines = []
+    for role_name, data in raw.items():
+        role_id, cd = data
+        tickets = (tickets_raw or {}).get(role_name, 1)
+        lines.append(f"`{role_name}`: **{cd}h** CD, **{tickets}** tickets")
+    role_block = "\n".join(lines) if lines else "No roles configured."
+    return header + "**Role config:**\n" + role_block
+
+
+async def run_setup_roles_session(ctx_or_interaction, guild: discord.Guild, user: discord.Member, channel):
+    """
+    !setup roles — interactive wizard:
+      1. Ask for default role (or "clear")
+      2. Ask for default cooldown
+      3. Add per-role configs one at a time
+    """
+    session_key = user.id
+    if session_key in active_setup_sessions:
+        msg = "You already have an active setup session. Finish or cancel it first."
         if isinstance(ctx_or_interaction, discord.Interaction):
             await ctx_or_interaction.response.send_message(msg, ephemeral=True)
         else:
             await channel.send(msg)
         return
 
-    active_setup_sessions[user.id] = guild.id
+    active_setup_sessions[session_key] = guild.id
+
+    def check(m):
+        return m.author.id == user.id and m.channel.id == channel.id
+
+    async def ask(prompt: str) -> str | None:
+        await channel.send(prompt)
+        try:
+            msg = await bot.wait_for("message", timeout=120.0, check=check)
+            return msg
+        except asyncio.TimeoutError:
+            active_setup_sessions.pop(session_key, None)
+            await channel.send("⏱️ Setup timed out. No changes were saved.")
+            return None
 
     intro = (
-        "**⚙️ GIF Bot Role Setup**\n\n"
-        "Send one role per message in this format:\n"
-        "> `@RoleName <cooldown_hours> <clash_tickets>`\n\n"
-        "**Examples:**\n"
-        "> `@Bum 18 4` — 18h cooldown, 4 clash tickets\n"
-        "> `@Moderator 0 10` — no cooldown, 10 clash tickets\n\n"
-        "**Notes:**\n"
-        "- Cooldown `0` = no cooldown\n"
-        "- Clash tickets determine win chance in a clash (higher = better odds)\n"
-        "- Roles not listed here will use the server default cooldown\n"
-        "- You have **2 minutes** per message before the session times out\n\n"
-        f"**Current config:**\n{build_setup_summary(guild.id)}\n\n"
-        "Type `done` when finished, or `cancel` to abort without saving."
+        "**⚙️ Server Setup — Step 1/3: Default GIF Role**\n\n"
+        "Which role should be required to use GIFs?\n"
+        "Mention a role (e.g. `@Bum`), type `clear` to allow everyone, or `cancel` to abort."
     )
-
     if isinstance(ctx_or_interaction, discord.Interaction):
         await ctx_or_interaction.response.send_message(intro)
     else:
         await channel.send(intro)
 
+    # --- Step 1: Default role ---
+    new_default_role_id = ...  # sentinel — means "don't change"
+    while True:
+        try:
+            msg = await bot.wait_for("message", timeout=120.0, check=check)
+        except asyncio.TimeoutError:
+            active_setup_sessions.pop(session_key, None)
+            await channel.send("⏱️ Setup timed out. No changes were saved.")
+            return
+
+        text = msg.content.strip().lower()
+        if text == "cancel":
+            active_setup_sessions.pop(session_key, None)
+            await channel.send("❌ Setup cancelled. No changes saved.")
+            return
+        if text == "clear":
+            new_default_role_id = None
+            await channel.send("✅ Default role will be cleared (everyone can use GIFs).")
+            break
+        if msg.role_mentions:
+            new_default_role_id = msg.role_mentions[0].id
+            await channel.send(f"✅ Default role set to **{msg.role_mentions[0].name}**.")
+            break
+        await channel.send("⚠️ Please @mention a role, type `clear`, or `cancel`.")
+
+    # --- Step 2: Default cooldown ---
+    await channel.send(
+        f"**Step 2/3: Default Cooldown**\n\n"
+        f"What should the default cooldown be (in hours) for roles not individually configured?\n"
+        f"Current: **{get_default_cooldown(guild.id)}h** — send a number or `cancel`."
+    )
+    new_default_cd = None
+    while True:
+        try:
+            msg = await bot.wait_for("message", timeout=120.0, check=check)
+        except asyncio.TimeoutError:
+            active_setup_sessions.pop(session_key, None)
+            await channel.send("⏱️ Setup timed out. No changes were saved.")
+            return
+
+        text = msg.content.strip().lower()
+        if text == "cancel":
+            active_setup_sessions.pop(session_key, None)
+            await channel.send("❌ Setup cancelled. No changes saved.")
+            return
+        try:
+            val = float(text)
+            if val < 0:
+                raise ValueError
+            new_default_cd = val
+            await channel.send(f"✅ Default cooldown set to **{val}h**.")
+            break
+        except ValueError:
+            await channel.send("⚠️ Please send a non-negative number (e.g. `12` or `4.5`), or `cancel`.")
+
+    # --- Step 3: Per-role config ---
+    await channel.send(
+        "**Step 3/3: Per-Role Config**\n\n"
+        "Add roles one at a time in this format:\n"
+        "> `@RoleName <cooldown_hours> <clash_tickets>`\n\n"
+        "**Examples:**\n"
+        "> `@Bum 18 4` — 18h cooldown, 4 clash tickets\n"
+        "> `@Moderator 0 10` — no cooldown, 10 clash tickets\n\n"
+        "Type `done` when finished (you can also type `done` now to skip and just save the defaults above).\n"
+        "Type `cancel` to abort everything."
+    )
+
     new_cooldowns = {}
     new_tickets = {}
-
-    def check(m):
-        return m.author.id == user.id and m.channel.id == channel.id
 
     while True:
         try:
             msg = await bot.wait_for("message", timeout=120.0, check=check)
         except asyncio.TimeoutError:
-            active_setup_sessions.pop(user.id, None)
+            active_setup_sessions.pop(session_key, None)
             await channel.send("⏱️ Setup timed out. No changes were saved.")
             return
 
         text = msg.content.strip().lower()
 
         if text == "cancel":
-            active_setup_sessions.pop(user.id, None)
-            await channel.send("❌ Setup cancelled. No changes were saved.")
+            active_setup_sessions.pop(session_key, None)
+            await channel.send("❌ Setup cancelled. No changes saved.")
             return
 
         if text == "done":
-            if not new_cooldowns:
-                active_setup_sessions.pop(user.id, None)
-                await channel.send("❌ No roles were added. Setup cancelled.")
-                return
+            # Save everything
             if guild.id not in server_settings:
                 server_settings[guild.id] = {}
-            server_settings[guild.id]["role_cooldowns"] = new_cooldowns
-            server_settings[guild.id]["clash_tickets"] = new_tickets
+            if new_default_role_id is not ...:
+                if new_default_role_id is None:
+                    server_settings[guild.id].pop("default_role_id", None)
+                else:
+                    server_settings[guild.id]["default_role_id"] = new_default_role_id
+            server_settings[guild.id]["default_cooldown"] = new_default_cd
+            if new_cooldowns:
+                server_settings[guild.id]["role_cooldowns"] = new_cooldowns
+                server_settings[guild.id]["clash_tickets"] = new_tickets
             save_server_settings()
-            active_setup_sessions.pop(user.id, None)
-            summary_lines = []
-            for role_name, data in new_cooldowns.items():
-                role_id, cd = data
-                tickets = new_tickets.get(role_name, 1)
-                summary_lines.append(f"<@&{role_id}> ({role_name}): **{cd}h** CD, **{tickets}** tickets")
-            await channel.send(
-                f"✅ **Setup complete!** Saved {len(new_cooldowns)} role(s):\n" +
-                "\n".join(summary_lines)
-            )
+            active_setup_sessions.pop(session_key, None)
+
+            confirm_lines = []
+            default_role_obj = guild.get_role(new_default_role_id) if new_default_role_id else None
+            confirm_lines.append(f"Default role: {f'`{default_role_obj.name}`' if default_role_obj else 'none (everyone)'}")
+            confirm_lines.append(f"Default cooldown: **{new_default_cd}h**")
+            if new_cooldowns:
+                for role_name, data in new_cooldowns.items():
+                    role_id, cd = data
+                    tickets = new_tickets.get(role_name, 1)
+                    confirm_lines.append(f"`{role_name}`: **{cd}h** CD, **{tickets}** tickets")
+            else:
+                confirm_lines.append("*(no per-role config added)*")
+            await channel.send("✅ **Setup complete!**\n" + "\n".join(confirm_lines))
             return
 
         if not msg.role_mentions:
             await channel.send(
-                "⚠️ Couldn't find a role mention. Make sure to @mention the role.\n"
+                "⚠️ Couldn't find a role mention. @mention the role.\n"
                 "Format: `@Role <cooldown_hours> <clash_tickets>` — e.g. `@Bum 18 4`\n"
-                "Type `cancel` to abort."
+                "Type `done` to finish or `cancel` to abort."
             )
             continue
 
@@ -1028,7 +1143,7 @@ async def run_setup_session(ctx_or_interaction, guild: discord.Guild, user: disc
         new_cooldowns[role.name] = [role.id, cd_hours]
         new_tickets[role.name] = tickets
         await channel.send(
-            f"✅ Added **{role.name}**: **{cd_hours}h** cooldown, **{tickets}** clash tickets. "
+            f"✅ Added `{role.name}`: **{cd_hours}h** cooldown, **{tickets}** clash tickets. "
             f"Send another role or type `done`."
         )
 
@@ -1192,15 +1307,10 @@ def build_help_embed(guild_id: int) -> discord.Embed:
         value=(
             f"Default role to use GIFs: {default_role_str}\n"
             f"Default cooldown: **{default_cd}h**\n"
-            "*Cooldowns are per-server. Role-specific cooldowns via `/setup` or `!setup`.*"
+            "*Cooldowns are per-server. Role-specific cooldowns via `!setup roles`.*"
         ),
         inline=False
     )
-    vow_lines = "\n".join(
-        f"**{name}** — {data['description']}"
-        for name, data in BINDING_VOWS.items()
-    )
-    embed.add_field(name="Binding Vows", value=vow_lines, inline=False)
     embed.add_field(
         name="📥 Vote for a Cooldown Discount",
         value=(
@@ -1212,20 +1322,25 @@ def build_help_embed(guild_id: int) -> discord.Embed:
     embed.add_field(
         name="Commands",
         value=(
-            "`/help` or `!help` — show this message\n"
-            "`/vote` or `!vote` — get the vote link for a 25% cooldown discount\n"
-            "`/cooldown [@user]` or `@bot` — check your (or someone else's) cooldown status\n"
-            "`/setup` or `!setup` — configure role cooldowns and clash tickets *(mods only)*\n"
-            "`/viewsetup` or `!viewsetup` — view current role config\n"
-            "`/resetcooldown @user [kill|save|both]` — reset a user's cooldown *(mods only)*\n"
-            "`/cooldowns [hours]` or `!cooldowns [hours]` — view or set the default cooldown *(mods only)*\n"
-            "`/setdefaultrole [@role]` — set the role needed to use GIFs *(mods only)*\n"
-            "`/cleardefaultrole` — remove the role requirement *(mods only)*\n"
-            "`/addkillgifs` or `!addkillgifs` — add/manage kill GIFs for this server *(mods only)*\n"
-            "`/addsavegifs` or `!addsavegifs` — add/manage save GIFs for this server *(mods only)*"
+            "`!help` — show this message\n"
+            "`!bindingvows` — show all Binding Vow descriptions\n"
+            "`!vote` — get the vote link for a 25% cooldown discount\n"
+            "`@bot` or `!cooldown [@user]` — check your (or someone else's) cooldown\n"
+            "`!resetcooldown @user [kill|save|both]` — reset a cooldown *(mods only)*\n"
+            "`!setup view` — view current server config *(mods only)*\n"
+            "`!setup roles` — configure default role, cooldown, and per-role settings *(mods only)*\n"
+            "`!setup killgifs` — manage kill GIFs for this server *(mods only)*\n"
+            "`!setup savegifs` — manage save GIFs for this server *(mods only)*"
         ),
         inline=False
     )
+    return embed
+
+
+def build_binding_vows_embed() -> discord.Embed:
+    embed = discord.Embed(title="⛩️ Binding Vows", color=discord.Color.dark_red())
+    for name, data in BINDING_VOWS.items():
+        embed.add_field(name=name, value=data["description"], inline=False)
     return embed
 
 
@@ -1276,35 +1391,87 @@ async def sync_commands(ctx):
 # PREFIX COMMANDS
 # =========================
 
+def is_mod(member: discord.Member) -> bool:
+    return member.guild_permissions.manage_roles or member.guild_permissions.manage_guild
+
+
 @bot.command(name="help")
 async def prefix_help(ctx):
     await ctx.send(embed=build_help_embed(ctx.guild.id))
 
 
+@bot.command(name="bindingvows")
+async def prefix_bindingvows(ctx):
+    await ctx.send(embed=build_binding_vows_embed())
+
+
+@bot.command(name="cooldown")
+async def prefix_cooldown(ctx, target: discord.Member = None):
+    member = target or ctx.author
+    msg = build_cooldown_status(member, ctx.guild.id)
+    await ctx.send(msg)
+
+
 @bot.command(name="setup")
-async def prefix_setup(ctx):
-    if not ctx.author.guild_permissions.manage_roles and not ctx.author.guild_permissions.manage_guild:
-        await ctx.send(f"{ctx.author.mention}, you need Manage Roles permission to run setup.")
+async def prefix_setup(ctx, subcommand: str = None):
+    if subcommand is None:
+        await ctx.send(
+            "**⚙️ Setup commands:**\n"
+            "`!setup view` — view current server config *(mods only)*\n"
+            "`!setup roles` — configure default role, cooldown, and per-role settings *(mods only)*\n"
+            "`!setup killgifs` — manage kill GIFs for this server *(mods only)*\n"
+            "`!setup savegifs` — manage save GIFs for this server *(mods only)*"
+        )
         return
-    await run_setup_session(ctx, ctx.guild, ctx.author, ctx.channel)
 
+    sub = subcommand.lower()
 
-@bot.command(name="viewsetup")
-async def prefix_viewsetup(ctx):
-    summary = build_setup_summary(ctx.guild.id)
-    default_cd = get_default_cooldown(ctx.guild.id)
-    default_role_id = get_default_role(ctx.guild.id)
-    default_role_str = f"<@&{default_role_id}>" if default_role_id else "none (everyone)"
+    if sub == "view":
+        if not is_mod(ctx.author):
+            await ctx.send(f"{ctx.author.mention}, you need Manage Roles permission to do that.")
+            return
+        summary = build_setup_summary_with_guild(ctx.guild)
+        # Kill GIFs count
+        kill_count = len(get_kill_gifs(ctx.guild.id))
+        save_count = len(get_save_gifs(ctx.guild.id))
+        kill_source = "custom" if kill_count != len(TARGET_GIFS) else "global default"
+        save_source = "custom" if save_count != len(UNTIMEOUT_GIFS) else "global default"
+        await ctx.send(
+            f"**⚙️ Server Config:**\n{summary}\n\n"
+            f"**Kill GIFs:** {kill_count} ({kill_source})\n"
+            f"**Save GIFs:** {save_count} ({save_source})"
+        )
+        return
+
+    if sub == "roles":
+        if not is_mod(ctx.author):
+            await ctx.send(f"{ctx.author.mention}, you need Manage Roles permission to do that.")
+            return
+        await run_setup_roles_session(ctx, ctx.guild, ctx.author, ctx.channel)
+        return
+
+    if sub == "killgifs":
+        if not is_mod(ctx.author):
+            await ctx.send(f"{ctx.author.mention}, you need Manage Roles permission to do that.")
+            return
+        await run_gif_setup_session(ctx, ctx.guild, ctx.author, ctx.channel, "kill")
+        return
+
+    if sub == "savegifs":
+        if not is_mod(ctx.author):
+            await ctx.send(f"{ctx.author.mention}, you need Manage Roles permission to do that.")
+            return
+        await run_gif_setup_session(ctx, ctx.guild, ctx.author, ctx.channel, "save")
+        return
+
     await ctx.send(
-        f"**⚙️ Current Role Config for this server:**\n{summary}\n\n"
-        f"**Default cooldown:** {default_cd}h\n"
-        f"**Default role required:** {default_role_str}"
+        f"Unknown subcommand `{subcommand}`. Use `view`, `roles`, `killgifs`, or `savegifs`."
     )
 
 
 @bot.command(name="resetcooldown")
 async def prefix_resetcooldown(ctx, target: discord.Member = None, which: str = "both"):
-    if not ctx.author.guild_permissions.manage_roles and not ctx.author.guild_permissions.manage_guild:
+    if not is_mod(ctx.author):
         await ctx.send(f"{ctx.author.mention}, you need the Manage Roles permission to do that.")
         return
     if not target:
@@ -1332,72 +1499,6 @@ async def prefix_resetcooldown(ctx, target: discord.Member = None, which: str = 
     await ctx.send(f"✅ Reset {label} for {target.mention}.")
 
 
-@bot.command(name="cooldowns")
-async def prefix_cooldowns(ctx, hours: str = None):
-    if not ctx.author.guild_permissions.manage_roles and not ctx.author.guild_permissions.manage_guild:
-        await ctx.send(f"{ctx.author.mention}, you need the Manage Roles permission to change the default cooldown.")
-        return
-    if hours is None:
-        current = get_default_cooldown(ctx.guild.id)
-        await ctx.send(f"Current default cooldown: **{current}h**\nUsage: `!cooldowns <hours>`")
-        return
-    try:
-        new_cd = float(hours)
-        if new_cd < 0:
-            raise ValueError
-    except ValueError:
-        await ctx.send("Invalid value. Must be a non-negative number.")
-        return
-    if ctx.guild.id not in server_settings:
-        server_settings[ctx.guild.id] = {}
-    server_settings[ctx.guild.id]["default_cooldown"] = new_cd
-    save_server_settings()
-    await ctx.send(f"✅ Default cooldown set to **{new_cd}h**")
-
-
-@bot.command(name="setdefaultrole")
-async def prefix_setdefaultrole(ctx, *, role_input: str = None):
-    if not ctx.author.guild_permissions.manage_roles and not ctx.author.guild_permissions.manage_guild:
-        await ctx.send(f"{ctx.author.mention}, you need the Manage Roles permission to do that.")
-        return
-    if not role_input:
-        current_id = get_default_role(ctx.guild.id)
-        role_str = ctx.guild.get_role(current_id).mention if current_id and ctx.guild.get_role(current_id) else "none (everyone)"
-        await ctx.send(f"Current default GIF role: {role_str}\nUsage: `!setdefaultrole @Role` or `!setdefaultrole clear`")
-        return
-    if role_input.strip().lower() == "clear":
-        if ctx.guild.id in server_settings:
-            server_settings[ctx.guild.id].pop("default_role_id", None)
-            save_server_settings()
-        await ctx.send("✅ Default role requirement cleared.")
-        return
-    role = ctx.message.role_mentions[0] if ctx.message.role_mentions else discord.utils.find(lambda r: r.name.lower() == role_input.lower(), ctx.guild.roles)
-    if not role:
-        await ctx.send("Couldn't find that role.")
-        return
-    if ctx.guild.id not in server_settings:
-        server_settings[ctx.guild.id] = {}
-    server_settings[ctx.guild.id]["default_role_id"] = role.id
-    save_server_settings()
-    await ctx.send(f"✅ Default GIF role set to **{role.name}**.")
-
-
-@bot.command(name="addkillgifs")
-async def prefix_addkillgifs(ctx):
-    if not ctx.author.guild_permissions.manage_roles and not ctx.author.guild_permissions.manage_guild:
-        await ctx.send(f"{ctx.author.mention}, you need Manage Roles permission to do that.")
-        return
-    await run_gif_setup_session(ctx, ctx.guild, ctx.author, ctx.channel, "kill")
-
-
-@bot.command(name="addsavegifs")
-async def prefix_addsavegifs(ctx):
-    if not ctx.author.guild_permissions.manage_roles and not ctx.author.guild_permissions.manage_guild:
-        await ctx.send(f"{ctx.author.mention}, you need Manage Roles permission to do that.")
-        return
-    await run_gif_setup_session(ctx, ctx.guild, ctx.author, ctx.channel, "save")
-
-
 # =========================
 # SLASH COMMANDS
 # =========================
@@ -1405,6 +1506,11 @@ async def prefix_addsavegifs(ctx):
 @bot.tree.command(name="help", description="Show how the bot works")
 async def slash_help(interaction: discord.Interaction):
     await interaction.response.send_message(embed=build_help_embed(interaction.guild_id))
+
+
+@bot.tree.command(name="bindingvows", description="Show all Binding Vow descriptions")
+async def slash_bindingvows(interaction: discord.Interaction):
+    await interaction.response.send_message(embed=build_binding_vows_embed())
 
 
 @bot.tree.command(name="cooldown", description="Check your (or someone else's) cooldown status")
@@ -1420,27 +1526,6 @@ async def slash_cooldown(interaction: discord.Interaction, target: discord.Membe
     await interaction.response.send_message(msg)
 
 
-@bot.tree.command(name="setup", description="Configure role cooldowns and clash tickets (mods only)")
-async def slash_setup(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.manage_roles and not interaction.user.guild_permissions.manage_guild:
-        await interaction.response.send_message("You need Manage Roles permission to run setup.", ephemeral=True)
-        return
-    await run_setup_session(interaction, interaction.guild, interaction.user, interaction.channel)
-
-
-@bot.tree.command(name="viewsetup", description="View the current role cooldown config for this server")
-async def slash_viewsetup(interaction: discord.Interaction):
-    summary = build_setup_summary(interaction.guild_id)
-    default_cd = get_default_cooldown(interaction.guild_id)
-    default_role_id = get_default_role(interaction.guild_id)
-    default_role_str = f"<@&{default_role_id}>" if default_role_id else "none (everyone)"
-    await interaction.response.send_message(
-        f"**⚙️ Current Role Config for this server:**\n{summary}\n\n"
-        f"**Default cooldown:** {default_cd}h\n"
-        f"**Default role required:** {default_role_str}"
-    )
-
-
 @bot.tree.command(name="resetcooldown", description="Reset a user's cooldown (mods only)")
 @app_commands.describe(target="The user to reset", which="Which cooldown to reset")
 @app_commands.choices(which=[
@@ -1449,7 +1534,7 @@ async def slash_viewsetup(interaction: discord.Interaction):
     app_commands.Choice(name="save", value="save"),
 ])
 async def slash_resetcooldown(interaction: discord.Interaction, target: discord.Member, which: str = "both"):
-    if not interaction.user.guild_permissions.manage_roles and not interaction.user.guild_permissions.manage_guild:
+    if not is_mod(interaction.user):
         await interaction.response.send_message("You need the Manage Roles permission to do that.", ephemeral=True)
         return
     gid = interaction.guild_id
@@ -1469,71 +1554,6 @@ async def slash_resetcooldown(interaction: discord.Interaction, target: discord.
     save_cooldowns()
     label = "kill and save cooldowns" if which == "both" else f"{which} cooldown"
     await interaction.response.send_message(f"✅ Reset {label} for {target.mention}.")
-
-
-@bot.tree.command(name="cooldowns", description="View or set the default cooldown (mods only)")
-@app_commands.describe(hours="New default cooldown in hours. Leave blank to view.")
-async def slash_cooldowns(interaction: discord.Interaction, hours: float = None):
-    if not interaction.user.guild_permissions.manage_roles and not interaction.user.guild_permissions.manage_guild:
-        await interaction.response.send_message("You need the Manage Roles permission.", ephemeral=True)
-        return
-    if hours is None:
-        current = get_default_cooldown(interaction.guild_id)
-        await interaction.response.send_message(f"Current default cooldown: **{current}h**", ephemeral=True)
-        return
-    if hours < 0:
-        await interaction.response.send_message("Cooldown must be non-negative.", ephemeral=True)
-        return
-    if interaction.guild_id not in server_settings:
-        server_settings[interaction.guild_id] = {}
-    server_settings[interaction.guild_id]["default_cooldown"] = hours
-    save_server_settings()
-    await interaction.response.send_message(f"✅ Default cooldown set to **{hours}h**")
-
-
-@bot.tree.command(name="setdefaultrole", description="Set the role required to use GIFs (mods only)")
-@app_commands.describe(role="The role to require. Leave blank to view.")
-async def slash_setdefaultrole(interaction: discord.Interaction, role: discord.Role = None):
-    if not interaction.user.guild_permissions.manage_roles and not interaction.user.guild_permissions.manage_guild:
-        await interaction.response.send_message("You need the Manage Roles permission.", ephemeral=True)
-        return
-    if role is None:
-        current_id = get_default_role(interaction.guild_id)
-        role_str = interaction.guild.get_role(current_id).mention if current_id and interaction.guild.get_role(current_id) else "none (everyone)"
-        await interaction.response.send_message(f"Current default GIF role: {role_str}", ephemeral=True)
-        return
-    if interaction.guild_id not in server_settings:
-        server_settings[interaction.guild_id] = {}
-    server_settings[interaction.guild_id]["default_role_id"] = role.id
-    save_server_settings()
-    await interaction.response.send_message(f"✅ Default GIF role set to **{role.name}**.")
-
-
-@bot.tree.command(name="cleardefaultrole", description="Remove the role requirement for using GIFs (mods only)")
-async def slash_cleardefaultrole(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.manage_roles and not interaction.user.guild_permissions.manage_guild:
-        await interaction.response.send_message("You need the Manage Roles permission.", ephemeral=True)
-        return
-    if interaction.guild_id in server_settings:
-        server_settings[interaction.guild_id].pop("default_role_id", None)
-        save_server_settings()
-    await interaction.response.send_message("✅ Role requirement cleared.")
-
-
-@bot.tree.command(name="addkillgifs", description="Add or manage kill GIFs for this server (mods only)")
-async def slash_addkillgifs(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.manage_roles and not interaction.user.guild_permissions.manage_guild:
-        await interaction.response.send_message("You need Manage Roles permission to do that.", ephemeral=True)
-        return
-    await run_gif_setup_session(interaction, interaction.guild, interaction.user, interaction.channel, "kill")
-
-
-@bot.tree.command(name="addsavegifs", description="Add or manage save GIFs for this server (mods only)")
-async def slash_addsavegifs(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.manage_roles and not interaction.user.guild_permissions.manage_guild:
-        await interaction.response.send_message("You need Manage Roles permission to do that.", ephemeral=True)
-        return
-    await run_gif_setup_session(interaction, interaction.guild, interaction.user, interaction.channel, "save")
 
 
 # =========================

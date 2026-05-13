@@ -846,6 +846,17 @@ def resolve_clash(attacker_tickets: int, defender_tickets: int) -> bool:
     return random.randint(1, total) <= attacker_tickets
 
 
+def pick_clash_gif(all_roles: list[list[str]]) -> str:
+    for roles in all_roles:
+        if GMM_ROLE in roles:
+            return random.choice(CLASH_GIFS_GMM)
+    return random.choice(CLASH_GIFS)
+
+
+def any_gmm(all_roles: list[list[str]]) -> bool:
+    return any(GMM_ROLE in roles for roles in all_roles)
+
+
 async def log_error(guild, label: str, error: Exception):
     tb = traceback.format_exc()
     print(f"[ERROR] {label}: {error}\n{tb}")

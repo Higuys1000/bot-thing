@@ -21,20 +21,16 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 TARGET_GIFS = [
     "https://tenor.com/view/jujutsu-kaisen-inumaki-toge-toge-inumaki-inumaki-toge-gif-2839387565091272519",
     "https://klipy.com/gifs/drmanhattan-watchman",
- 
-"https://tenor.com/view/not-very-woke-of-you-nuh-uh-homelander-gen-v-the-boys-gif-5949428463441363002",
-
-"https://tenor.com/view/vb-dragon-ball-super-finalkamehameha-power-anime-gif-17694754",
-   "https://klipy.com/gifs/blue-lock-gagamaru",
- 
-"https://tenor.com/view/marisa-master-spark-touhou-spell-card-marisa-spellcard-gif-26768695",
-   "https://tenor.com/view/jjk-jujutsu-kaisen-jjk-fight-jujutsu-kaisen-fight-yuji-itadori-gif-13410355612590763521",
+    "https://tenor.com/view/not-very-woke-of-you-nuh-uh-homelander-gen-v-the-boys-gif-5949428463441363002",
+    "https://tenor.com/view/vb-dragon-ball-super-finalkamehameha-power-anime-gif-17694754",
+    "https://klipy.com/gifs/blue-lock-gagamaru",
+    "https://tenor.com/view/marisa-master-spark-touhou-spell-card-marisa-spellcard-gif-26768695",
+    "https://tenor.com/view/jjk-jujutsu-kaisen-jjk-fight-jujutsu-kaisen-fight-yuji-itadori-gif-13410355612590763521",
     "https://tenor.com/view/toji-kick-gif-12937973716924321908",
     "https://tenor.com/view/nanami-shigemo-jjk-jujutsu-kaisen-jjk-season-2-gif-9821210930918976877",
     "https://tenor.com/view/thragg-invincible-thragg-grabbing-mark-thragg-chasing-mark-blaziful-gif-9903393455394604140",
- 
-"https://tenor.com/view/jjk-jjk-s2-jjk-season-2-jujutsu-kaisen-jujutsu-kaisen-season-2-gif-2446260417043491971",
-   "https://tenor.com/view/joe-swanson-gets-sent-to-the-shadow-realm-gif-12569580727382074039",
+    "https://tenor.com/view/jjk-jjk-s2-jjk-season-2-jujutsu-kaisen-jujutsu-kaisen-season-2-gif-2446260417043491971",
+    "https://tenor.com/view/joe-swanson-gets-sent-to-the-shadow-realm-gif-12569580727382074039",
     "https://tenor.com/view/avatar-eyes-mark-philips-rdcworld1-i-have-awoken-rdc-gif-11037312579902835094",
     "https://tenor.com/view/xenoverse-goku-super-saiyan-angry-dbz-gif-1416275111944307575",
     "https://tenor.com/view/yuta-yuta-okkotsu-jujutsu-kaisen-jjk-anime-gif-18377052283740449128",
@@ -105,7 +101,8 @@ TARGET_GIFS = [
     "https://tenor.com/view/can-haramba-stop-the-gta-v-plane-harambe-airplane-gorilla-gif-16789079",
     "https://tenor.com/view/megumin-explosion-nice-pic-for-profile-gif-13366421262293691006",
     "https://tenor.com/view/megumi-kirara-kirara-hoshi-jujutsu-kaisen-megumi-fushiguro-gif-18151328602197879806",
-    "https://tenor.com/view/jujutsu-kaisen-megumi-fushiguro-chizuru-hari-falling-crash-gif-6810573746992728455"
+    "https://tenor.com/view/jujutsu-kaisen-megumi-fushiguro-chizuru-hari-falling-crash-gif-6810573746992728455",
+    "https://tenor.com/view/joe-timeout-family-guy-joe-quagmire-pushes-joe-gif-9289846603013112649"
 ]
 
 UNTIMEOUT_GIFS = [

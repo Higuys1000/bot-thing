@@ -184,7 +184,7 @@ DEFAULT_CLASH_TICKETS = {
     "Chud": 10,
     "Otis BFF ❤️": 10,
     "Shit ass mod": 10,
-    "Good Moderator Morning!": 999
+    "Good Moderator Morning!": 20
 }
 
 GMM_ROLE = "Good Moderator Morning!"

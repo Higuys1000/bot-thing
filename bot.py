@@ -371,6 +371,129 @@ def save_cooldowns():
 
 
 # =========================
+# STAND SYSTEM
+# =========================
+
+# Role names that gate each stand
+STAND_ROLES = {
+    "theworld":      ["Bum", "Rat", "Chud", "Otis BFF ❤️", "Shit ass mod", "Good Moderator Morning!"],
+    "starplatinum":  ["Rat", "Chud", "Otis BFF ❤️", "Shit ass mod", "Good Moderator Morning!"],
+    "tooru":         ["Bum", "Rat", "Chud", "Otis BFF ❤️", "Shit ass mod", "Good Moderator Morning!"],
+    "d4c":           ["Chud", "Otis BFF ❤️", "Shit ass mod", "Good Moderator Morning!"],
+}
+
+STAND_COOLDOWNS_HOURS = {
+    "theworld":     24.0,
+    "starplatinum": 24.0,
+    "tooru":        10.0,
+    "d4cname":      12.0,
+    "d4cgif":        8.0,
+}
+
+D4C_GIF_MAX_CHARGES = 2
+
+# In-memory state  (guild_id, user_id) keyed
+stand_cooldowns: dict[tuple[int, int], dict[str, datetime]] = {}
+# (guild_id, user_id) → datetime until which tooru protection is active
+tooru_protected: dict[tuple[int, int], datetime] = {}
+# (guild_id, user_id) → True if currently marked by calamity
+calamity_marked: dict[tuple[int, int], bool] = {}
+# (guild_id, user_id) → charges remaining this cycle
+d4c_gif_charges: dict[tuple[int, int], int] = {}
+
+
+def has_stand_role(member: discord.Member, stand: str) -> bool:
+    allowed = STAND_ROLES.get(stand, [])
+    return any(r.name in allowed for r in member.roles)
+
+
+def get_stand_cd_remaining(guild_id: int, user_id: int, key: str) -> timedelta | None:
+    last = stand_cooldowns.get((guild_id, user_id), {}).get(key)
+    if not last:
+        return None
+    cd = timedelta(hours=STAND_COOLDOWNS_HOURS[key])
+    remaining = cd - (datetime.utcnow() - last)
+    return remaining if remaining.total_seconds() > 0 else None
+
+
+def set_stand_cd(guild_id: int, user_id: int, key: str):
+    stand_cooldowns.setdefault((guild_id, user_id), {})[key] = datetime.utcnow()
+
+
+def is_tooru_protected(guild_id: int, user_id: int) -> bool:
+    until = tooru_protected.get((guild_id, user_id))
+    if not until:
+        return False
+    if datetime.utcnow() < until:
+        return True
+    tooru_protected.pop((guild_id, user_id), None)
+    return False
+
+
+def is_calamity_marked(guild_id: int, user_id: int) -> bool:
+    return calamity_marked.get((guild_id, user_id), False)
+
+
+def get_d4c_charges(guild_id: int, user_id: int) -> int:
+    return d4c_gif_charges.get((guild_id, user_id), D4C_GIF_MAX_CHARGES)
+
+
+def load_stand_data():
+    try:
+        raw = redis.get("stand_data")
+        if not raw:
+            return
+        data = json.loads(raw)
+    except Exception as e:
+        print(f"[stands] Failed to load from Redis: {e}")
+        return
+
+    now = datetime.utcnow()
+
+    for k, cds in data.get("stand_cooldowns", {}).items():
+        parsed = _parse_gk(k)
+        stand_cooldowns[parsed] = {
+            ability: datetime.fromisoformat(ts) for ability, ts in cds.items()
+        }
+
+    for k, ts_str in data.get("tooru_protected", {}).items():
+        until = datetime.fromisoformat(ts_str)
+        if until > now:
+            tooru_protected[_parse_gk(k)] = until
+
+    for k, marked in data.get("calamity_marked", {}).items():
+        if marked:
+            calamity_marked[_parse_gk(k)] = True
+
+    for k, charges in data.get("d4c_gif_charges", {}).items():
+        d4c_gif_charges[_parse_gk(k)] = charges
+
+    print(f"[stands] Loaded stand data.")
+
+
+def save_stand_data():
+    data = {
+        "stand_cooldowns": {
+            _gk(*k): {ability: ts.isoformat() for ability, ts in cds.items()}
+            for k, cds in stand_cooldowns.items()
+        },
+        "tooru_protected": {
+            _gk(*k): until.isoformat() for k, until in tooru_protected.items()
+        },
+        "calamity_marked": {
+            _gk(*k): v for k, v in calamity_marked.items() if v
+        },
+        "d4c_gif_charges": {
+            _gk(*k): v for k, v in d4c_gif_charges.items()
+        },
+    }
+    try:
+        redis.set("stand_data", json.dumps(data))
+    except Exception as e:
+        print(f"[stands] Failed to save to Redis: {e}")
+
+
+# =========================
 # PER-SERVER GIF LISTS
 # =========================
 
@@ -1334,6 +1457,19 @@ def build_help_embed(guild_id: int) -> discord.Embed:
         ),
         inline=False
     )
+    embed.add_field(
+        name="⚡ Stand Abilities",
+        value=(
+            "`!theworld` — ZA WARUDO! 5s slowmode *(Bum+, 24h CD)*\n"
+            "`!starplatinum` — Star Platinum! 10s slowmode *(Rat+, 24h CD)*\n"
+            "`!tooru` — Wonder of U: protect yourself from guhs for 24h *(Bum+, 10h CD)*\n"
+            "`!calamity @user` — mark someone so their next guh is 2× *(Tooru users only)*\n"
+            "`!d4cname @user` — tag someone's nickname with (D4C) *(Chud+, 12h CD)*\n"
+            "`!d4csay @user <msg>` — make a D4C clone speak *(Chud+)*\n"
+            "`!d4cgif @user` — clone a guh on someone *(Chud+, 2 charges / 8h CD)*"
+        ),
+        inline=False
+    )
     return embed
 
 
@@ -1353,6 +1489,7 @@ async def on_ready():
     global server_settings
     server_settings = load_server_settings()
     load_cooldowns()
+    load_stand_data()
     print(f"Logged in as {bot.user}")
 
     for guild in bot.guilds:
@@ -1373,6 +1510,7 @@ async def periodic_save():
     await bot.wait_until_ready()
     while not bot.is_closed():
         save_cooldowns()
+        save_stand_data()
         await asyncio.sleep(60)
 
 
@@ -1497,6 +1635,177 @@ async def prefix_resetcooldown(ctx, target: discord.Member = None, which: str = 
     save_cooldowns()
     label = "kill and save cooldowns" if which == "both" else f"{which} cooldown"
     await ctx.send(f"✅ Reset {label} for {target.mention}.")
+
+
+# =========================
+# STAND COMMANDS
+# =========================
+
+@bot.command(name="theworld")
+async def cmd_theworld(ctx):
+    if not has_stand_role(ctx.author, "theworld"):
+        await ctx.send(f"{ctx.author.mention}, you don't have a stand that can use this.")
+        return
+    remaining = get_stand_cd_remaining(ctx.guild.id, ctx.author.id, "theworld")
+    if remaining:
+        await ctx.send(f"🕒 ZA WARUDO cooldown: **{str(remaining).split('.')[0]}** remaining.")
+        return
+    set_stand_cd(ctx.guild.id, ctx.author.id, "theworld")
+    save_stand_data()
+    await ctx.channel.set_slowmode_delay(5)
+    await ctx.send("🕒 **ZA WARUDO!** Time has stopped for 5 seconds.")
+    await asyncio.sleep(5)
+    await ctx.channel.set_slowmode_delay(0)
+    await ctx.send("⏳ Time flows normally again.")
+
+
+@bot.command(name="starplatinum")
+async def cmd_starplatinum(ctx):
+    if not has_stand_role(ctx.author, "starplatinum"):
+        await ctx.send(f"{ctx.author.mention}, you don't have a stand that can use this.")
+        return
+    remaining = get_stand_cd_remaining(ctx.guild.id, ctx.author.id, "starplatinum")
+    if remaining:
+        await ctx.send(f"⭐ Star Platinum cooldown: **{str(remaining).split('.')[0]}** remaining.")
+        return
+    set_stand_cd(ctx.guild.id, ctx.author.id, "starplatinum")
+    save_stand_data()
+    await ctx.channel.set_slowmode_delay(10)
+    await ctx.send("⭐ **STAR PLATINUM: THE WORLD!** Slowmode set to 10 seconds.")
+    await asyncio.sleep(10)
+    await ctx.channel.set_slowmode_delay(0)
+    await ctx.send("⏳ Time resumes.")
+
+
+@bot.command(name="tooru")
+async def cmd_tooru(ctx):
+    if not has_stand_role(ctx.author, "tooru"):
+        await ctx.send(f"{ctx.author.mention}, you don't have a stand that can use this.")
+        return
+    remaining = get_stand_cd_remaining(ctx.guild.id, ctx.author.id, "tooru")
+    if remaining:
+        await ctx.send(f"🌪️ Wonder of U cooldown: **{str(remaining).split('.')[0]}** remaining.")
+        return
+    set_stand_cd(ctx.guild.id, ctx.author.id, "tooru")
+    until = datetime.utcnow() + timedelta(hours=24)
+    tooru_protected[(ctx.guild.id, ctx.author.id)] = until
+    save_stand_data()
+    await ctx.send(f"🌪️ **Wonder of U** activated! {ctx.author.mention} is protected from guhs for 24 hours.")
+
+
+@bot.command(name="calamity")
+async def cmd_calamity(ctx, target: discord.Member = None):
+    if not has_stand_role(ctx.author, "tooru"):
+        await ctx.send(f"{ctx.author.mention}, you don't have a stand that can use this.")
+        return
+    if not target:
+        await ctx.send("Usage: `!calamity @user`")
+        return
+    if target.id == ctx.author.id:
+        await ctx.send("You can't mark yourself.")
+        return
+    calamity_marked[(ctx.guild.id, target.id)] = True
+    save_stand_data()
+    await ctx.send(f"💀 **Flow of Calamity** has marked {target.mention}. Their next guh punishment will be **2×**.")
+
+
+@bot.command(name="d4cname")
+async def cmd_d4cname(ctx, target: discord.Member = None):
+    if not has_stand_role(ctx.author, "d4c"):
+        await ctx.send(f"{ctx.author.mention}, you don't have a stand that can use this.")
+        return
+    if not target:
+        await ctx.send("Usage: `!d4cname @user`")
+        return
+    remaining = get_stand_cd_remaining(ctx.guild.id, ctx.author.id, "d4cname")
+    if remaining:
+        await ctx.send(f"🌀 D4C name cooldown: **{str(remaining).split('.')[0]}** remaining.")
+        return
+    try:
+        new_nick = target.display_name
+        if "(D4C)" not in new_nick:
+            new_nick += " (D4C)"
+        await target.edit(nick=new_nick)
+        set_stand_cd(ctx.guild.id, ctx.author.id, "d4cname")
+        save_stand_data()
+        await ctx.send(f"🌀 {target.mention} has been cloned by **D4C**. Their name now bears the mark.")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to change that user's nickname.")
+    except Exception as e:
+        await ctx.send(f"❌ Failed: {e}")
+
+
+@bot.command(name="d4csay")
+async def cmd_d4csay(ctx, target: discord.Member = None, *, text: str = None):
+    if not has_stand_role(ctx.author, "d4c"):
+        await ctx.send(f"{ctx.author.mention}, you don't have a stand that can use this.")
+        return
+    if not target or not text:
+        await ctx.send("Usage: `!d4csay @user <message>`")
+        return
+    await ctx.send(f"🌀 **{target.display_name} (D4C clone):** {text}")
+
+
+@bot.command(name="d4cgif")
+async def cmd_d4cgif(ctx, target: discord.Member = None):
+    if not has_stand_role(ctx.author, "d4c"):
+        await ctx.send(f"{ctx.author.mention}, you don't have a stand that can use this.")
+        return
+    if not target:
+        await ctx.send("Usage: `!d4cgif @user`")
+        return
+    if target.id == ctx.author.id:
+        await ctx.send("You can't D4C gif yourself.")
+        return
+
+    gid = ctx.guild.id
+    uid = ctx.author.id
+    key = (gid, uid)
+
+    charges = get_d4c_charges(gid, uid)
+
+    if charges <= 0:
+        remaining = get_stand_cd_remaining(gid, uid, "d4cgif")
+        if remaining:
+            await ctx.send(f"🌀 D4C GIF charges depleted. Cooldown: **{str(remaining).split('.')[0]}** remaining.")
+            return
+        # CD expired — restore charges
+        d4c_gif_charges[key] = D4C_GIF_MAX_CHARGES
+        set_stand_cd(gid, uid, "d4cgif")
+        save_stand_data()
+        charges = D4C_GIF_MAX_CHARGES
+
+    # Use a charge
+    d4c_gif_charges[key] = charges - 1
+    if charges - 1 == 0:
+        # Start the CD now that last charge was used
+        set_stand_cd(gid, uid, "d4cgif")
+    save_stand_data()
+
+    # Check Tooru protection on target
+    if is_tooru_protected(gid, target.id):
+        await ctx.send(f"🌪️ {target.mention} is protected by **Wonder of U** — the D4C gif was blocked! (Charge spent)")
+        return
+
+    # Apply Calamity if marked
+    duration = 90
+    if is_calamity_marked(gid, target.id):
+        duration *= 2
+        calamity_marked.pop((gid, target.id), None)
+        save_stand_data()
+        await ctx.send(f"💀 **Flow of Calamity** doubled the D4C timeout!")
+
+    try:
+        await target.timeout(discord.utils.utcnow() + timedelta(seconds=duration))
+        charges_left = d4c_gif_charges.get(key, 0)
+        await ctx.send(
+            f"🌀 **D4C** cloned the guh on {target.mention}! Timed out for {duration}s.\n"
+            f"Charges remaining: **{charges_left}/{D4C_GIF_MAX_CHARGES}**"
+        )
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to timeout that user.")
+    except Exception as e:
+        await ctx.send(f"❌ Failed: {e}")
 
 
 # =========================
@@ -1675,6 +1984,14 @@ async def finalize_clash(clash_id: int):
             save_cooldowns()
         else:
             actual_duration = timeout_duration
+
+        # Calamity 2x — applies to the original target (participants[1])
+        original_target_id = participants[1].id if len(participants) >= 2 else None
+        if original_target_id and is_calamity_marked(guild_id, original_target_id):
+            actual_duration *= 2
+            calamity_marked.pop((guild_id, original_target_id), None)
+            save_stand_data()
+            await channel.send(f"💀 **Flow of Calamity** doubled the timeout duration!")
 
         # Hakari solo
         if attacker_vow == "Hakari Vow" and len(participants) == 2 and not clash_data.get("target_challenged"):
@@ -1920,6 +2237,10 @@ async def on_message(message):
         defender_vow = get_active_vow(defender_roles)
         if defender_vow == "Bitchout Vow" and GMM_ROLE not in author_roles:
             await message.channel.send(f"{member_to_timeout.mention} has **Bitchout Vow** — they're immune to guhs!")
+            return
+        # Tooru protection check
+        if is_tooru_protected(gid, member_to_timeout.id):
+            await message.channel.send(f"🌪️ {member_to_timeout.mention} is protected by **Wonder of U** — the guh was blocked!")
             return
 
     if vow == "Bitchout Vow":

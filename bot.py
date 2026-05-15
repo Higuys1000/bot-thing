@@ -37,9 +37,8 @@ TARGET_GIFS = [
     "https://tenor.com/view/mahito-mechamaru-jujutsu-kaisen-fight-jjk-gif-13293311021769477196",
     "https://tenor.com/view/naoya-jujutsu-kaisen-jujutsu-kaisen-season-3-maki-maki-zenin-gif-13642749527516671169",
     "https://tenor.com/view/fujinvfx-maki-maki-zenin-jujutsu-kaisen-jjk-gif-11607407997389549481",
-  
-"https://tenor.com/view/dragon-ball-super-broly-broly-gogeta-super-saiyan-gogeta-super-saiyan-blue-gogeta-gif-25779469",
-  "https://tenor.com/view/nanami-punch-jujutsu-kaisen-shibuya-3-dontdox-gif-7014352537901038364",
+    "https://tenor.com/view/dragon-ball-super-broly-broly-gogeta-super-saiyan-gogeta-super-saiyan-blue-gogeta-gif-25779469",
+    "https://tenor.com/view/nanami-punch-jujutsu-kaisen-shibuya-3-dontdox-gif-7014352537901038364",
     "https://tenor.com/view/fnaf-fnaf4-freddy-freddy-fazbear-nightmare-freddy-gif-24525113",
     "https://tenor.com/view/gojo-gojo-satoru-gojo-season-2-hip-thrust-reaction-gif-10399129046512126318",
     "https://tenor.com/view/megumi-fushiguro-fushi-guro-megumi-fushiguro-mahoraga-gif-92941122665464082",
@@ -113,9 +112,8 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/revive-gif-23866294",
     "https://cdn.discordapp.com/attachments/1495487069617655828/1502347991887904839/attachment.gif",
     "https://tenor.com/view/kenjaku-jujutsu-kaisen-mahito-geto-suguru-geto-gif-3390342049104401664",
- 
-"https://tenor.com/view/dbz-strong-sky-gif-14611436",
-   "https://tenor.com/view/todo-jjk-jujutsu-kaisen-shibuya-arc-mahito-gif-11933159284027340768",
+    "https://tenor.com/view/dbz-strong-sky-gif-14611436",
+    "https://tenor.com/view/todo-jjk-jujutsu-kaisen-shibuya-arc-mahito-gif-11933159284027340768",
     "https://tenor.com/view/the-boys-homelander-season-5-tung-tung-tung-sahur-tung-tung-sahur-gif-7005128074439649595",
     "https://tenor.com/view/he-has-me-gif-13654467562542512739",
     "https://tenor.com/view/ryomen-sukuna-sukuna-ryomen-sukuna-ryomen-megumi-fushiguro-gif-6088274754816185868",
@@ -773,7 +771,8 @@ def can_gain_miracle_from_failed_timeout(guild_id: int, user_id: int) -> bool:
     last = miracle_gain_cooldown.get((guild_id, user_id))
     if not last:
         return True
-    return datetime.utcnow() - last >= timedelta(hours=MIRACLE_GAIN_COOLDOWN_HOURS)
+    cd = apply_vote_discount(MIRACLE_GAIN_COOLDOWN_HOURS, user_id)
+    return datetime.utcnow() - last >= timedelta(hours=cd)
 
 
 def record_miracle_gain_from_failed_timeout(guild_id: int, user_id: int):
@@ -794,14 +793,16 @@ def is_ragebait_on_cd(guild_id: int, user_id: int, now: datetime) -> bool:
     last = ragebait_last_used.get((guild_id, user_id))
     if not last:
         return False
-    return now - last < timedelta(hours=RAGEBAIT_COOLDOWN_HOURS)
+    cd = apply_vote_discount(RAGEBAIT_COOLDOWN_HOURS, user_id)
+    return now - last < timedelta(hours=cd)
 
 
 def get_ragebait_remaining(guild_id: int, user_id: int, now: datetime) -> timedelta:
     last = ragebait_last_used.get((guild_id, user_id))
     if not last:
         return timedelta(0)
-    return max(timedelta(0), timedelta(hours=RAGEBAIT_COOLDOWN_HOURS) - (now - last))
+    cd = apply_vote_discount(RAGEBAIT_COOLDOWN_HOURS, user_id)
+    return max(timedelta(0), timedelta(hours=cd) - (now - last))
 
 
 # =========================
@@ -1176,6 +1177,8 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
     now = datetime.utcnow()
     uid = member.id
     gid = guild_id
+    voted = has_active_vote(uid)
+    vote_label = " 📥 25% off" if voted else ""
 
     if vow == "CONFLICT":
         return (
@@ -1184,10 +1187,10 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
         )
 
     if base_cd == 0:
-        return f"{member.mention}, ({role_label}{vow_str}) you have no cooldown 😈"
+        return f"{member.mention}, ({role_label}{vow_str}{vote_label}) you have no cooldown 😈"
 
     if vow == "Stack Vow":
-        sv_cd = base_cd * STACK_VOW_MULTIPLIER
+        sv_cd = apply_vote_discount(base_cd * STACK_VOW_MULTIPLIER, uid)
 
         def charge_status(action: str) -> str:
             available = stack_vow_available_charges(gid, uid, action, sv_cd, now)
@@ -1198,7 +1201,7 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
             return charge_pips
 
         return (
-            f"{member.mention}, ({role_label} [Stack Vow]) CD: {sv_cd:.4g}h per charge\n"
+            f"{member.mention}, ({role_label} [Stack Vow]{vote_label}) CD: {sv_cd:.4g}h per charge\n"
             f"☠️ Kill charges: {charge_status('kill')}\n"
             f"💚 Save charges: {charge_status('save')}"
         )
@@ -1218,7 +1221,7 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
             return f"**{str(remaining).split('.')[0]}** remaining"
 
         return (
-            f"{member.mention}, ({role_label} [Miracle Vow]) ✨ Miracles: {miracles}/{MIRACLE_MAX}\n"
+            f"{member.mention}, ({role_label} [Miracle Vow]{vote_label}) ✨ Miracles: {miracles}/{MIRACLE_MAX}\n"
             f"☠️ Kill CD: {format_cd_miracle(kill_cd, last_kill)}\n"
             f"💚 Save CD: {format_cd_miracle(save_cd, last_save)}"
         )
@@ -1232,14 +1235,16 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
         def format_random_cd(cd_val: float | None, last: datetime | None) -> str:
             if cd_val is None or not last:
                 return "ready ✅"
-            td = timedelta(hours=cd_val)
+            discounted = apply_vote_discount(cd_val, uid)
+            td = timedelta(hours=discounted)
             if now - last >= td:
                 return "ready ✅"
             remaining = td - (now - last)
-            return f"**{str(remaining).split('.')[0]}** remaining (rolled {cd_val:.2f}h)"
+            suffix = f"rolled {cd_val:.2f}h" + (f", discounted to {discounted:.2f}h" if voted else "")
+            return f"**{str(remaining).split('.')[0]}** remaining ({suffix})"
 
         return (
-            f"{member.mention}, ({role_label} [Random Vow])\n"
+            f"{member.mention}, ({role_label} [Random Vow]{vote_label})\n"
             f"☠️ Kill CD: {format_random_cd(kill_cd_val, last_kill)}\n"
             f"💚 Save CD: {format_random_cd(save_cd_val, last_save)}"
         )
@@ -1259,18 +1264,17 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
 
         ragebait_remaining = get_ragebait_remaining(gid, uid, now)
         ragebait_status = "ready ✅" if ragebait_remaining.total_seconds() == 0 else f"**{str(ragebait_remaining).split('.')[0]}** remaining"
+        ragebait_cd_display = apply_vote_discount(RAGEBAIT_COOLDOWN_HOURS, uid)
         return (
-            f"{member.mention}, ({role_label} [Ragebait Vow])\n"
-            f"😡 Ragebait CD (1h): {ragebait_status}\n"
-            f"💚 Save CD ({base_cd}h): {format_cd_simple(save_cd, last_save)}"
+            f"{member.mention}, ({role_label} [Ragebait Vow]{vote_label})\n"
+            f"😡 Ragebait CD ({ragebait_cd_display:.4g}h): {ragebait_status}\n"
+            f"💚 Save CD ({save_cd:.4g}h): {format_cd_simple(save_cd, last_save)}"
         )
 
     kill_cd = apply_vote_discount(apply_vow(base_cd, "kill", vow), uid)
     save_cd = apply_vote_discount(apply_vow(base_cd, "save", vow), uid)
     last_kill = last_kill_used.get((gid, uid))
     last_save = last_save_used.get((gid, uid))
-    voted = has_active_vote(uid)
-    vote_label = " 📥 25% off" if voted else ""
 
     def format_cd(hours: float, last: datetime | None) -> str:
         if hours == -1.0:
@@ -1319,7 +1323,7 @@ def build_help_embed(guild_id: int) -> discord.Embed:
     embed.add_field(
         name="📥 Vote for a Cooldown Discount",
         value=(
-            "Vote for the bot to get **25% off your cooldowns** for 12 hours!\n"
+            "Vote for the bot to get **25% off ALL your cooldowns** for 12 hours!\n"
             "[Click here to vote](https://discordbotlist.com/bots/funnything/upvote)"
         ),
         inline=False
@@ -1332,6 +1336,7 @@ def build_help_embed(guild_id: int) -> discord.Embed:
             "`!vote` — get the vote link for a 25% cooldown discount\n"
             "`@bot` or `!cooldown [@user]` — check your (or someone else's) cooldown\n"
             "`!resetcooldown @user [kill|save|both]` — reset a cooldown *(mods only)*\n"
+            "`!fakevote [@user]` — simulate a vote *(mods only)*\n"
             "`!setup view` — view current server config *(mods only)*\n"
             "`!setup roles` — configure default role, cooldown, and per-role settings *(mods only)*\n"
             "`!setup killgifs` — manage kill GIFs for this server *(mods only)*\n"
@@ -1504,6 +1509,19 @@ async def prefix_resetcooldown(ctx, target: discord.Member = None, which: str = 
     await ctx.send(f"✅ Reset {label} for {target.mention}.")
 
 
+@bot.command(name="fakevote")
+async def prefix_fakevote(ctx, target: discord.Member = None):
+    if not is_mod(ctx.author):
+        await ctx.send(f"{ctx.author.mention}, admin only.")
+        return
+    if not target:
+        target = ctx.author
+    vote_timestamps[target.id] = datetime.utcnow()
+    save_cooldowns()
+    print(f"[vote] Fake vote registered for user {target.id} by admin {ctx.author.id}")
+    await ctx.send(f"✅ Fake vote registered for {target.mention}. 25% off cooldowns for 12h.")
+
+
 # =========================
 # SLASH COMMANDS
 # =========================
@@ -1561,6 +1579,20 @@ async def slash_resetcooldown(interaction: discord.Interaction, target: discord.
     await interaction.response.send_message(f"✅ Reset {label} for {target.mention}.")
 
 
+@bot.tree.command(name="fakevote", description="Admin: simulate a vote for a user")
+@app_commands.describe(target="The user to fake-vote for (defaults to you)")
+async def slash_fakevote(interaction: discord.Interaction, target: discord.Member = None):
+    if not is_mod(interaction.user):
+        await interaction.response.send_message("Admin only.", ephemeral=True)
+        return
+    if not target:
+        target = interaction.user
+    vote_timestamps[target.id] = datetime.utcnow()
+    save_cooldowns()
+    print(f"[vote] Fake vote registered for user {target.id} by admin {interaction.user.id}")
+    await interaction.response.send_message(f"✅ Fake vote registered for {target.mention}. 25% off cooldowns for 12h.")
+
+
 # =========================
 # VOTE COMMANDS
 # =========================
@@ -1572,7 +1604,7 @@ def build_vote_embed(user_id: int) -> discord.Embed:
     embed = discord.Embed(
         title="📥 Vote for a Cooldown Discount!",
         description=(
-            "Vote for the bot on Discord Bot List and get **25% off your cooldowns** for 12 hours!\n\n"
+            "Vote for the bot on Discord Bot List and get **25% off ALL your cooldowns** for 12 hours!\n\n"
             "[🔗 Click here to vote](https://discordbotlist.com/bots/funnything/upvote)"
         ),
         color=VOTE_EMBED_COLOR,
@@ -1602,35 +1634,43 @@ async def slash_vote(interaction: discord.Interaction):
 # =========================
 
 async def handle_dbl_webhook(request: web.Request) -> web.Response:
+    print(f"[vote] Incoming request from {request.remote}")
+    print(f"[vote] Headers: {dict(request.headers)}")
     auth = request.headers.get("Authorization", "")
     if VOTE_WEBHOOK_AUTH and auth != VOTE_WEBHOOK_AUTH:
+        print(f"[vote] Auth mismatch. Expected: {VOTE_WEBHOOK_AUTH!r}, Got: {auth!r}")
         return web.Response(status=401, text="Unauthorized")
     try:
         data = await request.json()
-    except Exception:
+        print(f"[vote] Payload: {data}")
+    except Exception as e:
+        print(f"[vote] Failed to parse JSON: {e}")
         return web.Response(status=400, text="Bad request")
     user_id_str = data.get("id") or data.get("user")
     if not user_id_str:
+        print(f"[vote] No user ID in payload")
         return web.Response(status=400, text="No user ID in payload")
     try:
         user_id = int(user_id_str)
     except ValueError:
+        print(f"[vote] Invalid user ID: {user_id_str!r}")
         return web.Response(status=400, text="Invalid user ID")
     vote_timestamps[user_id] = datetime.utcnow()
     save_cooldowns()
-    print(f"[vote] Recorded vote for user {user_id}")
+    print(f"[vote] ✅ Recorded vote for user {user_id}")
     try:
         user = await bot.fetch_user(user_id)
         if user:
             dm_embed = discord.Embed(
                 title="📥 Thanks for voting!",
                 description=(
-                    "You now have **25% off your cooldowns** for the next 12 hours. Nice.\n\n"
+                    "You now have **25% off ALL your cooldowns** for the next 12 hours. Nice.\n\n"
                     "[Vote again after 12 hours](https://discordbotlist.com/bots/funnything/upvote)"
                 ),
                 color=VOTE_EMBED_COLOR
             )
             await user.send(embed=dm_embed)
+            print(f"[vote] DM sent to user {user_id}")
     except Exception as e:
         print(f"[vote] Could not DM user {user_id}: {e}")
     return web.Response(status=200, text="OK")
@@ -1938,7 +1978,7 @@ async def on_message(message):
     # STACK VOW
     # =========================
     if vow == "Stack Vow":
-        sv_cd = base_cd * STACK_VOW_MULTIPLIER
+        sv_cd = apply_vote_discount(base_cd * STACK_VOW_MULTIPLIER, uid)
         available = stack_vow_available_charges(gid, uid, action, sv_cd, now)
         if available == 0:
             next_regen = stack_vow_next_regen(gid, uid, action, sv_cd, now)
@@ -1948,21 +1988,26 @@ async def on_message(message):
             return
         stack_vow_consume_charge(gid, uid, action, now)
         remaining_after = available - 1
-        vow_str = f" [Stack Vow | {remaining_after}/{STACK_VOW_MAX_CHARGES} {action} charges left]"
+        vote_label = " 📥 25% off" if has_active_vote(uid) else ""
+        vow_str = f" [Stack Vow{vote_label} | {remaining_after}/{STACK_VOW_MAX_CHARGES} {action} charges left]"
 
     # =========================
     # RANDOM VOW
     # =========================
     elif vow == "Random Vow":
-        rv_cd = get_random_vow_cd(gid, uid, action)
+        rv_cd_raw = get_random_vow_cd(gid, uid, action)
+        rv_cd = apply_vote_discount(rv_cd_raw, uid) if rv_cd_raw is not None else None
         last = last_kill_used.get((gid, uid)) if action == "kill" else last_save_used.get((gid, uid))
         if rv_cd is not None and last is not None and now - last < timedelta(hours=rv_cd):
             remaining = timedelta(hours=rv_cd) - (now - last)
+            voted = has_active_vote(uid)
+            suffix = f"rolled {rv_cd_raw:.2f}h" + (f", discounted to {rv_cd:.2f}h" if voted else "")
             await message.channel.send(
-                f"{message.author.mention}, [Random Vow] cooldown remaining: **{str(remaining).split('.')[0]}** (rolled {rv_cd:.2f}h)"
+                f"{message.author.mention}, [Random Vow] cooldown remaining: **{str(remaining).split('.')[0]}** ({suffix})"
             )
             return
-        vow_str = " [Random Vow]"
+        vote_label = " 📥 25% off" if has_active_vote(uid) else ""
+        vow_str = f" [Random Vow{vote_label}]"
 
     # =========================
     # MIRACLE VOW
@@ -1976,7 +2021,8 @@ async def on_message(message):
                 f"{message.author.mention}, [Miracle Vow] cooldown remaining: **{str(remaining).split('.')[0]}**"
             )
             return
-        vow_str = " [Miracle Vow]"
+        vote_label = " 📥 25% off" if has_active_vote(uid) else ""
+        vow_str = f" [Miracle Vow{vote_label}]"
 
     # =========================
     # RAGEBAIT VOW
@@ -1991,7 +2037,8 @@ async def on_message(message):
                     f"{message.author.mention}, [Ragebait Vow] save cooldown remaining: **{str(remaining).split('.')[0]}**"
                 )
                 return
-        vow_str = " [Ragebait Vow]"
+        vote_label = " 📥 25% off" if has_active_vote(uid) else ""
+        vow_str = f" [Ragebait Vow{vote_label}]"
 
     # =========================
     # STANDARD VOW
@@ -2017,7 +2064,7 @@ async def on_message(message):
                     if target_vow == "Miracle Vow":
                         if not can_gain_miracle_from_failed_timeout(gid, member_to_timeout.id):
                             await message.channel.send(
-                                f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: {str(remaining).split('.')[0]}"
+                                f"{message.author.mention}, ({role_label}{vow_str}{vote_label}) cooldown remaining: {str(remaining).split('.')[0]}"
                             )
                             return
                         new_count = add_miracle(gid, member_to_timeout.id)
@@ -2025,12 +2072,12 @@ async def on_message(message):
                         save_cooldowns()
                         if new_count == -1:
                             await message.channel.send(
-                                f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: {str(remaining).split('.')[0]}\n"
+                                f"{message.author.mention}, ({role_label}{vow_str}{vote_label}) cooldown remaining: {str(remaining).split('.')[0]}\n"
                                 f"{member_to_timeout.mention} is already at max miracles ({MIRACLE_MAX}/{MIRACLE_MAX})!"
                             )
                         else:
                             await message.channel.send(
-                                f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: {str(remaining).split('.')[0]}\n"
+                                f"{message.author.mention}, ({role_label}{vow_str}{vote_label}) cooldown remaining: {str(remaining).split('.')[0]}\n"
                                 f"✨ {member_to_timeout.mention} got a miracle! They now have **{new_count}/{MIRACLE_MAX}** miracles."
                             )
                         return

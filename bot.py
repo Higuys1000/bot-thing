@@ -144,7 +144,8 @@ UNTIMEOUT_GIFS = [
     "https://cdn.discordapp.com/attachments/1501576319597674547/1501657150697771100/image0.gif",
     "https://tenor.com/view/storm-rain-raining-gif-12250202288703677838",
     "https://tenor.com/view/death-of-the-self-gay-fluff-shigadeku-shigaraki-deku-gif-24033047",
-    "https://tenor.com/view/gay-anime-anime-gay-gif-18237425560170880188"
+    "https://tenor.com/view/gay-anime-anime-gay-gif-18237425560170880188",
+    "https://tenor.com/view/pluh-veilbound-gif-4315180366045476816"
 ]
 
 CLASH_GIFS = [

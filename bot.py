@@ -219,7 +219,7 @@ server_settings: dict[int, dict] = {}
 # VOTE SYSTEM
 # =========================
 
-VOTE_WEBHOOK_PORT = int(os.getenv("PORT", os.getenv("VOTE_WEBHOOK_PORT", "5000")))
+VOTE_WEBHOOK_PORT = int(os.getenv("PORT", os.getenv("VOTE_WEBHOOK_PORT", "8080")))
 VOTE_WEBHOOK_AUTH = os.getenv("VOTE_WEBHOOK_AUTH", "")
 VOTE_DURATION_HOURS = 12.0
 VOTE_DISCOUNT = 0.75

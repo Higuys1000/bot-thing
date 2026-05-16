@@ -27,7 +27,7 @@ TARGET_GIFS = [
     "https://tenor.com/view/marisa-master-spark-touhou-spell-card-marisa-spellcard-gif-26768695",
     "https://tenor.com/view/jjk-jujutsu-kaisen-jjk-fight-jujutsu-kaisen-fight-yuji-itadori-gif-13410355612590763521",
     "https://tenor.com/view/toji-kick-gif-12937973716924321908",
-
+ 
 "https://tenor.com/view/naoya-naoya-zenin-maki-maki-zenin-jujutsu-kaisen-gif-17328697393958063167",
     "https://tenor.com/view/nanami-shigemo-jjk-jujutsu-kaisen-jjk-season-2-gif-9821210930918976877",
     "https://tenor.com/view/thragg-invincible-thragg-grabbing-mark-thragg-chasing-mark-blaziful-gif-9903393455394604140",

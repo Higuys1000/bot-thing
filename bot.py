@@ -253,7 +253,7 @@ def vote_note(user_id: int) -> str:
     """Returns a 'vote for 25% off' note if the user hasn't voted, else empty."""
     if has_active_vote(user_id):
         return ""
-    return "\n📥 *Tired of waiting? [Vote for 25% off cooldowns](https://discordbotlist.com/bots/funnything/upvote) for 12h!*"
+    return "\n📥 *Tired of waiting? [Vote for 25% off cooldowns](<https://discordbotlist.com/bots/funnything/upvote>) for 12h!*"
 
 
 def load_server_settings() -> dict:

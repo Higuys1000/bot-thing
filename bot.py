@@ -104,7 +104,8 @@ TARGET_GIFS = [
     "https://tenor.com/view/megumin-explosion-nice-pic-for-profile-gif-13366421262293691006",
     "https://tenor.com/view/megumi-kirara-kirara-hoshi-jujutsu-kaisen-megumi-fushiguro-gif-18151328602197879806",
     "https://tenor.com/view/jujutsu-kaisen-megumi-fushiguro-chizuru-hari-falling-crash-gif-6810573746992728455",
-    "https://tenor.com/view/joe-timeout-family-guy-joe-quagmire-pushes-joe-gif-9289846603013112649"
+    "https://tenor.com/view/joe-timeout-family-guy-joe-quagmire-pushes-joe-gif-9289846603013112649",
+    "https://tenor.com/view/meowbah-kitten-catgirl-waifu-kawaii-gif-4834640869291019912"
 ]
 
 UNTIMEOUT_GIFS = [

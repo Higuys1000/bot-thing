@@ -165,7 +165,6 @@ CLASH_GIFS_GMM = [
 MIRACLE_BLOCK_GIF = "https://cdn.discordapp.com/attachments/1395472869991121078/1497282590267281448/runningtrue.gif"
 
 CLASH_WINDOW_SECONDS = 5
-TIMEOUT_SECONDS = 90
 
 # =========================
 # DEFAULT ROLE CONFIG
@@ -180,7 +179,16 @@ DEFAULT_ROLE_COOLDOWNS = {
     "Good Moderator Morning!": 0,
 }
 
-DEFAULT_CLASH_TICKETS = {
+DEFAULT_ROLE_TIMEOUTS = {
+    "Bum": 60,
+    "Rat": 90,
+    "Chud": 120,
+    "Otis BFF ❤️": 120,
+    "Shit ass mod": 180,
+    "Good Moderator Morning!": 300,
+}
+
+DEFAULT_ROLE_POWER = {
     "Bum": 4,
     "Rat": 7,
     "Chud": 10,
@@ -188,6 +196,8 @@ DEFAULT_CLASH_TICKETS = {
     "Shit ass mod": 10,
     "Good Moderator Morning!": 20
 }
+
+DEFAULT_TIMEOUT_SECONDS = 90
 
 GMM_ROLE = "Good Moderator Morning!"
 
@@ -199,11 +209,22 @@ def get_role_cooldowns(guild_id: int) -> dict[str, float]:
     return {name: data[1] for name, data in raw.items()}
 
 
-def get_clash_tickets_map(guild_id: int) -> dict[str, int]:
-    raw = server_settings.get(guild_id, {}).get("clash_tickets", None)
+def get_role_power_map(guild_id: int) -> dict[str, int]:
+    raw = server_settings.get(guild_id, {}).get("role_power", None)
     if not raw:
-        return DEFAULT_CLASH_TICKETS
+        return DEFAULT_ROLE_POWER
     return raw
+
+
+def get_role_timeouts_map(guild_id: int) -> dict[str, int]:
+    raw = server_settings.get(guild_id, {}).get("role_timeouts", None)
+    if not raw:
+        return DEFAULT_ROLE_TIMEOUTS
+    return raw
+
+
+def get_default_timeout(guild_id: int) -> int:
+    return server_settings.get(guild_id, {}).get("default_timeout", DEFAULT_TIMEOUT_SECONDS)
 
 
 # =========================
@@ -480,6 +501,44 @@ async def run_gif_setup_session(ctx_or_interaction, guild: discord.Guild, user: 
     def check(m):
         return m.author.id == user.id and m.channel.id == channel.id
 
+    # If no custom list exists yet, ask whether to start from the global default GIFs
+    if not existing_custom_raw:
+        defaults = TARGET_GIFS if gif_type == "kill" else UNTIMEOUT_GIFS
+        await channel.send(
+            f"📦 This server has no custom {gif_type} GIFs yet. "
+            f"There are **{len(defaults)}** built-in default {gif_type} GIFs available.\n\n"
+            f"Do you want to **keep the defaults** and add your own on top, or **start from scratch** with only the GIFs you add?\n"
+            f"Type `keep` to include defaults, or `fresh` to start empty.\n"
+            f"(You can also `cancel` to abort.)"
+        )
+        while True:
+            try:
+                msg = await bot.wait_for("message", timeout=120.0, check=check)
+            except asyncio.TimeoutError:
+                active_setup_sessions.pop(session_key, None)
+                await channel.send(f"⏱️ {gif_type.capitalize()} GIF setup timed out. No changes were saved.")
+                return
+            choice = msg.content.strip().lower()
+            if choice == "cancel":
+                active_setup_sessions.pop(session_key, None)
+                await channel.send(f"❌ {gif_type.capitalize()} GIF setup cancelled. No changes were saved.")
+                return
+            if choice == "keep":
+                existing_custom_raw = list(defaults)
+                await channel.send(
+                    f"✅ Starting with the **{len(defaults)}** default {gif_type} GIFs. Any new GIFs you add will be appended.\n"
+                    f"Send GIF links one at a time, or type `done` when finished."
+                )
+                break
+            if choice == "fresh":
+                existing_custom_raw = []
+                await channel.send(
+                    f"✅ Starting with an empty {gif_type} GIF list. Send the GIFs you want one at a time, or type `done` when finished.\n"
+                    f"⚠️ If you save with no GIFs added, the bot will fall back to global defaults anyway."
+                )
+                break
+            await channel.send("⚠️ Please type `keep`, `fresh`, or `cancel`.")
+
     while True:
         try:
             msg = await bot.wait_for("message", timeout=120.0, check=check)
@@ -649,7 +708,7 @@ BINDING_VOWS = {
     "Destruction Vow": {
         "kill_multiplier": 2.0,
         "save_multiplier": None,
-        "description": "Kill CDs ×2, deal 270s timeout. Cannot save anyone.",
+        "description": "Kill CDs ×2, timeout duration ×3. Cannot save anyone.",
     },
     "Healing Vow": {
         "kill_multiplier": None,
@@ -845,19 +904,34 @@ clash_head_lookup: dict[int, int] = {}
 active_setup_sessions: dict[int, int] = {}
 
 
-def get_clash_tickets(member_roles: list[str], guild_id: int) -> int:
-    tickets_map = get_clash_tickets_map(guild_id)
+def get_role_power(member_roles: list[str], guild_id: int) -> int:
+    power_map = get_role_power_map(guild_id)
     best = 0
     for role_name in member_roles:
-        tickets = tickets_map.get(role_name, 0)
-        if tickets > best:
-            best = tickets
+        power = power_map.get(role_name, 0)
+        if power > best:
+            best = power
     return best if best > 0 else 1
 
 
-def resolve_clash(attacker_tickets: int, defender_tickets: int) -> bool:
-    total = attacker_tickets + defender_tickets
-    return random.randint(1, total) <= attacker_tickets
+def get_role_timeout(member_roles: list[str], guild_id: int) -> int:
+    """Return timeout (seconds) from the highest-power matching role, or default."""
+    power_map = get_role_power_map(guild_id)
+    timeouts_map = get_role_timeouts_map(guild_id)
+    best_role = None
+    best_power = -1
+    for role_name in member_roles:
+        if role_name in power_map and power_map[role_name] > best_power:
+            best_power = power_map[role_name]
+            best_role = role_name
+    if best_role and best_role in timeouts_map:
+        return timeouts_map[best_role]
+    return get_default_timeout(guild_id)
+
+
+def resolve_clash(attacker_power: int, defender_power: int) -> bool:
+    total = attacker_power + defender_power
+    return random.randint(1, total) <= attacker_power
 
 
 def pick_clash_gif(all_roles: list[list[str]]) -> str:
@@ -925,20 +999,29 @@ async def try_untimeout(member: discord.Member, channel: discord.TextChannel, la
 
 def build_setup_summary(guild_id: int) -> str:
     raw = server_settings.get(guild_id, {}).get("role_cooldowns", None)
-    tickets_raw = server_settings.get(guild_id, {}).get("clash_tickets", None)
+    power_raw = server_settings.get(guild_id, {}).get("role_power", None)
+    timeouts_raw = server_settings.get(guild_id, {}).get("role_timeouts", None)
     default_cd = get_default_cooldown(guild_id)
+    default_to = get_default_timeout(guild_id)
     default_role_id = get_default_role(guild_id)
     default_role_str = f"role ID {default_role_id}" if default_role_id else "none (everyone)"
-    header = f"**Default cooldown:** {default_cd}h\n**Default role required:** {default_role_str}\n\n"
+    header = (
+        f"**Default cooldown:** {default_cd}h\n"
+        f"**Default timeout:** {default_to}s\n"
+        f"**Default role required:** {default_role_str}\n\n"
+    )
     if not raw:
-        lines = [f"**{name}**: {cd}h CD, {DEFAULT_CLASH_TICKETS.get(name, 1)} tickets"
-                 for name, cd in DEFAULT_ROLE_COOLDOWNS.items()]
+        lines = [
+            f"**{name}**: {cd}h CD, {DEFAULT_ROLE_TIMEOUTS.get(name, default_to)}s timeout, {DEFAULT_ROLE_POWER.get(name, 1)} power"
+            for name, cd in DEFAULT_ROLE_COOLDOWNS.items()
+        ]
         return header + "**Role config** *(using defaults)*:\n" + "\n".join(lines)
     lines = []
     for role_name, data in raw.items():
         role_id, cd = data
-        tickets = (tickets_raw or {}).get(role_name, 1)
-        lines.append(f"`{role_name}`: **{cd}h** CD, **{tickets}** tickets")
+        power = (power_raw or {}).get(role_name, 1)
+        timeout = (timeouts_raw or {}).get(role_name, default_to)
+        lines.append(f"`{role_name}`: **{cd}h** CD, **{timeout}s** timeout, **{power}** power")
     role_block = "\n".join(lines) if lines else "No roles configured."
     return header + "**Role config:**\n" + role_block
 
@@ -946,21 +1029,30 @@ def build_setup_summary(guild_id: int) -> str:
 def build_setup_summary_with_guild(guild: discord.Guild) -> str:
     guild_id = guild.id
     raw = server_settings.get(guild_id, {}).get("role_cooldowns", None)
-    tickets_raw = server_settings.get(guild_id, {}).get("clash_tickets", None)
+    power_raw = server_settings.get(guild_id, {}).get("role_power", None)
+    timeouts_raw = server_settings.get(guild_id, {}).get("role_timeouts", None)
     default_cd = get_default_cooldown(guild_id)
+    default_to = get_default_timeout(guild_id)
     default_role_id = get_default_role(guild_id)
     default_role_obj = guild.get_role(default_role_id) if default_role_id else None
     default_role_str = f"`{default_role_obj.name}`" if default_role_obj else "none (everyone)"
-    header = f"**Default cooldown:** {default_cd}h\n**Default role required:** {default_role_str}\n\n"
+    header = (
+        f"**Default cooldown:** {default_cd}h\n"
+        f"**Default timeout:** {default_to}s\n"
+        f"**Default role required:** {default_role_str}\n\n"
+    )
     if not raw:
-        lines = [f"**{name}**: {cd}h CD, {DEFAULT_CLASH_TICKETS.get(name, 1)} tickets"
-                 for name, cd in DEFAULT_ROLE_COOLDOWNS.items()]
+        lines = [
+            f"**{name}**: {cd}h CD, {DEFAULT_ROLE_TIMEOUTS.get(name, default_to)}s timeout, {DEFAULT_ROLE_POWER.get(name, 1)} power"
+            for name, cd in DEFAULT_ROLE_COOLDOWNS.items()
+        ]
         return header + "**Role config** *(using defaults)*:\n" + "\n".join(lines)
     lines = []
     for role_name, data in raw.items():
         role_id, cd = data
-        tickets = (tickets_raw or {}).get(role_name, 1)
-        lines.append(f"`{role_name}`: **{cd}h** CD, **{tickets}** tickets")
+        power = (power_raw or {}).get(role_name, 1)
+        timeout = (timeouts_raw or {}).get(role_name, default_to)
+        lines.append(f"`{role_name}`: **{cd}h** CD, **{timeout}s** timeout, **{power}** power")
     role_block = "\n".join(lines) if lines else "No roles configured."
     return header + "**Role config:**\n" + role_block
 
@@ -997,7 +1089,7 @@ async def run_setup_roles_session(ctx_or_interaction, guild: discord.Guild, user
             return None
 
     intro = (
-        "**⚙️ Server Setup — Step 1/3: Default GIF Role**\n\n"
+        "**⚙️ Server Setup — Step 1/4: Default GIF Role**\n\n"
         "Which role should be required to use GIFs?\n"
         "Mention a role (e.g. `@Bum`), type `clear` to allow everyone, or `cancel` to abort."
     )
@@ -1033,7 +1125,7 @@ async def run_setup_roles_session(ctx_or_interaction, guild: discord.Guild, user
 
     # --- Step 2: Default cooldown ---
     await channel.send(
-        f"**Step 2/3: Default Cooldown**\n\n"
+        f"**Step 2/4: Default Cooldown**\n\n"
         f"What should the default cooldown be (in hours) for roles not individually configured?\n"
         f"Current: **{get_default_cooldown(guild.id)}h** — send a number or `cancel`."
     )
@@ -1061,20 +1153,57 @@ async def run_setup_roles_session(ctx_or_interaction, guild: discord.Guild, user
         except ValueError:
             await channel.send("⚠️ Please send a non-negative number (e.g. `12` or `4.5`), or `cancel`.")
 
-    # --- Step 3: Per-role config ---
+    # --- Step 3: Default timeout ---
     await channel.send(
-        "**Step 3/3: Per-Role Config**\n\n"
+        f"**Step 3/4: Default Timeout**\n\n"
+        f"How long (in seconds) should a kill GIF time someone out by default?\n"
+        f"This is used for roles that don't have their own timeout set.\n"
+        f"Current: **{get_default_timeout(guild.id)}s** — send a whole number or `cancel`."
+    )
+    new_default_to = None
+    while True:
+        try:
+            msg = await bot.wait_for("message", timeout=120.0, check=check)
+        except asyncio.TimeoutError:
+            active_setup_sessions.pop(session_key, None)
+            await channel.send("⏱️ Setup timed out. No changes were saved.")
+            return
+
+        text = msg.content.strip().lower()
+        if text == "cancel":
+            active_setup_sessions.pop(session_key, None)
+            await channel.send("❌ Setup cancelled. No changes saved.")
+            return
+        try:
+            val = int(float(text))
+            if val < 1:
+                raise ValueError
+            new_default_to = val
+            await channel.send(f"✅ Default timeout set to **{val}s**.")
+            break
+        except ValueError:
+            await channel.send("⚠️ Please send a positive whole number of seconds (e.g. `90`), or `cancel`.")
+
+    # --- Step 4: Per-role config ---
+    await channel.send(
+        "**Step 4/4: Per-Role Config**\n\n"
         "Add roles one at a time in this format:\n"
-        "> `@RoleName <cooldown_hours> <clash_tickets>`\n\n"
+        "> `@RoleName <cooldown_hours> <timeout_seconds> <power>`\n\n"
+        "🔹 **cooldown_hours** — how long they wait between kills/saves\n"
+        "🔹 **timeout_seconds** — how long their kill GIFs time someone out for\n"
+        "🔹 **power** — strength in clashes. Higher power = more likely to win when two people clash. "
+        "If a role has **10 power** and another has **2 power**, the 10-power role wins ~83% of clashes against them. "
+        "It's a weighted roll, not a guarantee.\n\n"
         "**Examples:**\n"
-        "> `@Bum 18 4` — 18h cooldown, 4 clash tickets\n"
-        "> `@Moderator 0 10` — no cooldown, 10 clash tickets\n\n"
+        "> `@Bum 18 60 4` — 18h CD, 60s timeout, 4 power (weakest)\n"
+        "> `@Moderator 0 180 10` — no CD, 3min timeout, 10 power (strong)\n\n"
         "Type `done` when finished (you can also type `done` now to skip and just save the defaults above).\n"
         "Type `cancel` to abort everything."
     )
 
     new_cooldowns = {}
-    new_tickets = {}
+    new_power = {}
+    new_timeouts = {}
 
     while True:
         try:
@@ -1101,9 +1230,11 @@ async def run_setup_roles_session(ctx_or_interaction, guild: discord.Guild, user
                 else:
                     server_settings[guild.id]["default_role_id"] = new_default_role_id
             server_settings[guild.id]["default_cooldown"] = new_default_cd
+            server_settings[guild.id]["default_timeout"] = new_default_to
             if new_cooldowns:
                 server_settings[guild.id]["role_cooldowns"] = new_cooldowns
-                server_settings[guild.id]["clash_tickets"] = new_tickets
+                server_settings[guild.id]["role_power"] = new_power
+                server_settings[guild.id]["role_timeouts"] = new_timeouts
             save_server_settings()
             active_setup_sessions.pop(session_key, None)
 
@@ -1111,11 +1242,13 @@ async def run_setup_roles_session(ctx_or_interaction, guild: discord.Guild, user
             default_role_obj = guild.get_role(new_default_role_id) if new_default_role_id else None
             confirm_lines.append(f"Default role: {f'`{default_role_obj.name}`' if default_role_obj else 'none (everyone)'}")
             confirm_lines.append(f"Default cooldown: **{new_default_cd}h**")
+            confirm_lines.append(f"Default timeout: **{new_default_to}s**")
             if new_cooldowns:
                 for role_name, data in new_cooldowns.items():
                     role_id, cd = data
-                    tickets = new_tickets.get(role_name, 1)
-                    confirm_lines.append(f"`{role_name}`: **{cd}h** CD, **{tickets}** tickets")
+                    power = new_power.get(role_name, 1)
+                    timeout = new_timeouts.get(role_name, new_default_to)
+                    confirm_lines.append(f"`{role_name}`: **{cd}h** CD, **{timeout}s** timeout, **{power}** power")
             else:
                 confirm_lines.append("*(no per-role config added)*")
             await channel.send("✅ **Setup complete!**\n" + "\n".join(confirm_lines))
@@ -1124,7 +1257,7 @@ async def run_setup_roles_session(ctx_or_interaction, guild: discord.Guild, user
         if not msg.role_mentions:
             await channel.send(
                 "⚠️ Couldn't find a role mention. @mention the role.\n"
-                "Format: `@Role <cooldown_hours> <clash_tickets>` — e.g. `@Bum 18 4`\n"
+                "Format: `@Role <cooldown_hours> <timeout_seconds> <power>` — e.g. `@Bum 18 60 4`\n"
                 "Type `done` to finish or `cancel` to abort."
             )
             continue
@@ -1132,32 +1265,37 @@ async def run_setup_roles_session(ctx_or_interaction, guild: discord.Guild, user
         parts = msg.content.strip().split()
         numbers = [p for p in parts if re.match(r'^\d+(\.\d+)?$', p)]
 
-        if len(numbers) < 2:
+        if len(numbers) < 3:
             await channel.send(
-                "⚠️ Need both a cooldown and clash tickets value.\n"
-                "Format: `@Role <cooldown_hours> <clash_tickets>` — e.g. `@Bum 18 4`"
+                "⚠️ Need cooldown, timeout, AND power values.\n"
+                "Format: `@Role <cooldown_hours> <timeout_seconds> <power>` — e.g. `@Bum 18 60 4`"
             )
             continue
 
         try:
             cd_hours = float(numbers[0])
-            tickets = int(float(numbers[1]))
+            timeout_secs = int(float(numbers[1]))
+            power = int(float(numbers[2]))
         except ValueError:
-            await channel.send("⚠️ Invalid numbers. Cooldown must be a number, tickets must be a whole number.")
+            await channel.send("⚠️ Invalid numbers. Cooldown can be decimal, timeout and power must be whole numbers.")
             continue
 
         if cd_hours < 0:
             await channel.send("⚠️ Cooldown can't be negative.")
             continue
-        if tickets < 0:
-            await channel.send("⚠️ Clash tickets can't be negative.")
+        if timeout_secs < 1:
+            await channel.send("⚠️ Timeout must be at least 1 second.")
+            continue
+        if power < 0:
+            await channel.send("⚠️ Power can't be negative.")
             continue
 
         role = msg.role_mentions[0]
         new_cooldowns[role.name] = [role.id, cd_hours]
-        new_tickets[role.name] = tickets
+        new_power[role.name] = power
+        new_timeouts[role.name] = timeout_secs
         await channel.send(
-            f"✅ Added `{role.name}`: **{cd_hours}h** cooldown, **{tickets}** clash tickets. "
+            f"✅ Added `{role.name}`: **{cd_hours}h** cooldown, **{timeout_secs}s** timeout, **{power}** power. "
             f"Send another role or type `done`."
         )
 
@@ -1332,15 +1470,18 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
 
 def build_help_embed(guild_id: int) -> discord.Embed:
     default_cd = get_default_cooldown(guild_id)
+    default_to = get_default_timeout(guild_id)
     default_role_id = get_default_role(guild_id)
     embed = discord.Embed(title="Bot Help", color=discord.Color.blurple())
     embed.add_field(
         name="How it works",
         value=(
-            "Reply to someone's message with a **kill GIF** to time them out (90s).\n"
+            "Reply to someone's message with a **kill GIF** to time them out.\n"
             "Reply to a timed-out user's message with a **save GIF** to free them early.\n"
             "If anyone replies to the kill GIF chain with another kill GIF within 5 seconds, a **Clash** happens — "
-            "up to 10 fighters can join! The winner is picked by ticket weight, everyone else gets timed out."
+            "up to 10 fighters can join! The winner is decided by a weighted roll: each fighter's **power** stat "
+            "(set per-role) is how many tickets they get in the lottery. More power = more likely to win, but never guaranteed. "
+            "Everyone except the winner gets timed out."
         ),
         inline=False
     )
@@ -1350,7 +1491,8 @@ def build_help_embed(guild_id: int) -> discord.Embed:
         value=(
             f"Default role to use GIFs: {default_role_str}\n"
             f"Default cooldown: **{default_cd}h**\n"
-            "*Cooldowns are per-server. Role-specific cooldowns via `!setup roles`.*"
+            f"Default timeout: **{default_to}s**\n"
+            "*Cooldowns, timeouts, and clash power are per-role and per-server. Configure them with `!setup roles`.*"
         ),
         inline=False
     )
@@ -1742,8 +1884,8 @@ async def finalize_clash(clash_id: int):
             attacker_roles = [r.name for r in attacker.roles]
             d_roles = [r.name for r in original_target.roles]
             d_vow = get_active_vow(d_roles)
-            attacker_tickets = get_clash_tickets(attacker_roles, guild_id)
-            defender_tickets = get_clash_tickets(d_roles, guild_id)
+            attacker_power = get_role_power(attacker_roles, guild_id)
+            defender_power = get_role_power(d_roles, guild_id)
 
             all_roles_list = [attacker_roles, d_roles]
             await channel.send(pick_clash_gif(all_roles_list))
@@ -1754,7 +1896,7 @@ async def finalize_clash(clash_id: int):
             last_kill_used[(guild_id, original_target.id)] = datetime.utcnow()
             save_cooldowns()
 
-            attacker_wins = resolve_clash(attacker_tickets, defender_tickets)
+            attacker_wins = resolve_clash(attacker_power, defender_power)
             winner = attacker if attacker_wins else original_target
             loser = original_target if attacker_wins else attacker
 
@@ -1797,13 +1939,13 @@ async def finalize_clash(clash_id: int):
             last_kill_used[(guild_id, p.id)] = now_snap
         save_cooldowns()
 
-        ticket_list = [(p, get_clash_tickets([r.name for r in p.roles], guild_id)) for p in participants]
-        total_tickets = sum(t for _, t in ticket_list)
-        roll = random.randint(1, total_tickets)
+        power_list = [(p, get_role_power([r.name for r in p.roles], guild_id)) for p in participants]
+        total_power = sum(t for _, t in power_list)
+        roll = random.randint(1, total_power)
         cumulative = 0
         winner = None
-        for member, tickets in ticket_list:
-            cumulative += tickets
+        for member, power in power_list:
+            cumulative += power
             if roll <= cumulative:
                 winner = member
                 break
@@ -2160,7 +2302,8 @@ async def on_message(message):
             await bot.process_commands(message)
             return
 
-        timeout_duration = 270 if vow == "Destruction Vow" else TIMEOUT_SECONDS
+        base_timeout = get_role_timeout(author_roles, gid)
+        timeout_duration = base_timeout * 3 if vow == "Destruction Vow" else base_timeout
 
         if vow == "Random Vow":
             last_kill_used[(gid, uid)] = now

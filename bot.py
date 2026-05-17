@@ -104,8 +104,7 @@ TARGET_GIFS = [
     "https://tenor.com/view/megumin-explosion-nice-pic-for-profile-gif-13366421262293691006",
     "https://tenor.com/view/megumi-kirara-kirara-hoshi-jujutsu-kaisen-megumi-fushiguro-gif-18151328602197879806",
     "https://tenor.com/view/jujutsu-kaisen-megumi-fushiguro-chizuru-hari-falling-crash-gif-6810573746992728455",
-    "https://tenor.com/view/joe-timeout-family-guy-joe-quagmire-pushes-joe-gif-9289846603013112649",
-    "https://tenor.com/view/meowbah-kitten-catgirl-waifu-kawaii-gif-4834640869291019912"
+    "https://tenor.com/view/joe-timeout-family-guy-joe-quagmire-pushes-joe-gif-9289846603013112649"
 ]
 
 UNTIMEOUT_GIFS = [
@@ -734,10 +733,10 @@ BINDING_VOWS = {
         "save_multiplier": 1.0,
         "description": "After each kill, timeout duration is random and kill CD is randomized 1-21h. Save CD randomized 2-10h independently.",
     },
-    "Bitchout Vow": {
+    "Guh Opt Out": {
         "kill_multiplier": None,
         "save_multiplier": None,
-        "description": "Cannot kill or save anyone. Immune to being guhed (except by Good Moderator Morning).",
+        "description": "Opt out of guhs entirely. You can't kill, save, or be timed out by anyone (except by Good Moderator Morning).",
     },
     "Ragebait Vow": {
         "kill_multiplier": 1.0,
@@ -766,10 +765,10 @@ def get_active_vow(author_roles: list[str]) -> str | None:
 
 
 def apply_vow(base_cooldown_hours: float, action: str, vow_name: str | None) -> float:
-    if not vow_name or vow_name in ("CONFLICT", "Stack Vow", "Random Vow", "Miracle Vow", "Bitchout Vow") or vow_name not in BINDING_VOWS:
+    if not vow_name or vow_name in ("CONFLICT", "Stack Vow", "Random Vow", "Miracle Vow", "Guh Opt Out") or vow_name not in BINDING_VOWS:
         if vow_name == "Miracle Vow":
             return max(0.0, base_cooldown_hours * 2.5)
-        if vow_name == "Bitchout Vow":
+        if vow_name == "Guh Opt Out":
             return -1.0
         return max(0.0, base_cooldown_hours)
     vow = BINDING_VOWS[vow_name]
@@ -1411,8 +1410,8 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
             f"💚 Save CD: {format_random_cd(save_cd_val, last_save)}{note}"
         )
 
-    if vow == "Bitchout Vow":
-        return f"{member.mention}, you're a bitch but a guh free bitch atleast"
+    if vow == "Guh Opt Out":
+        return f"{member.mention}, you've opted out of Guh — no cooldowns apply, you can't be timed out."
 
     if vow == "Ragebait Vow":
         save_cd = apply_vote_discount(base_cd, uid)
@@ -1524,7 +1523,11 @@ def build_help_embed(guild_id: int) -> discord.Embed:
 
 
 def build_binding_vows_embed() -> discord.Embed:
-    embed = discord.Embed(title="⛩️ Binding Vows", color=discord.Color.dark_red())
+    embed = discord.Embed(
+        title="⛩️ Binding Vows",
+        description="People with a role of this name get special effects listed.",
+        color=discord.Color.dark_red()
+    )
     for name, data in BINDING_VOWS.items():
         embed.add_field(name=name, value=data["description"], inline=False)
     return embed
@@ -2098,20 +2101,20 @@ async def on_message(message):
         vow = None
 
     # =========================
-    # BITCHOUT VOW
+    # GUH OPT OUT
     # =========================
     if is_kill_gif:
         defender_roles = [r.name for r in member_to_timeout.roles]
         defender_vow = get_active_vow(defender_roles)
-        if defender_vow == "Bitchout Vow" and GMM_ROLE not in author_roles:
-            await message.channel.send(f"{member_to_timeout.mention} has **Bitchout Vow** — they're immune to guhs!")
+        if defender_vow == "Guh Opt Out" and GMM_ROLE not in author_roles:
+            await message.channel.send(f"{member_to_timeout.mention} has opted out of Guh and can't be timed out.")
             return
 
-    if vow == "Bitchout Vow":
+    if vow == "Guh Opt Out":
         if action == "kill":
-            await message.channel.send("you're a bitch but a guh free bitch atleast")
+            await message.channel.send(f"{message.author.mention}, you've opted out of Guh — you can't time anyone out.")
         else:
-            await message.channel.send(f"{message.author.mention}, your **Bitchout Vow** forbids you from saving. 🪹")
+            await message.channel.send(f"{message.author.mention}, you've opted out of Guh — you can't save anyone either.")
         return
 
     # =========================
@@ -2247,7 +2250,8 @@ async def on_message(message):
             return
 
         remaining = member_to_timeout.timed_out_until - discord.utils.utcnow()
-        if remaining.total_seconds() <= 90:
+        saver_max_save = get_role_timeout(author_roles, gid) * 2
+        if remaining.total_seconds() <= saver_max_save:
             if await try_untimeout(member_to_timeout, message.channel):
                 if vow == "Random Vow":
                     last_save_used[(gid, uid)] = now
@@ -2279,7 +2283,15 @@ async def on_message(message):
                     else:
                         await message.channel.send(f"✨ {member_to_timeout.mention} got a miracle from being saved! They now have **{new_count}/{MIRACLE_MAX}** miracles.")
         else:
-            await message.channel.send(f"Too long left on timeout ({int(remaining.total_seconds())}s). Can't save them.")
+            # Too long left — refund any save resources the user already spent so no CD is applied
+            if vow == "Stack Vow":
+                user_data = stack_vow_charges.get((gid, uid), {})
+                if user_data.get("save"):
+                    user_data["save"].pop()
+            await message.channel.send(
+                f"Too long left on timeout (**{int(remaining.total_seconds())}s** remaining). "
+                f"You can only save people with **{saver_max_save}s** or less left. No cooldown used."
+            )
         await bot.process_commands(message)
         return
 

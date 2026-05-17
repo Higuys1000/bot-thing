@@ -736,7 +736,7 @@ BINDING_VOWS = {
     "Guh Opt Out": {
         "kill_multiplier": None,
         "save_multiplier": None,
-        "description": "Opt out of guhs entirely. You can't kill, save, or be timed out by anyone (except by Good Moderator Morning).",
+        "description": "Opt out of guhs entirely. You can't kill, save, or be timed out by anyone.",
     },
     "Ragebait Vow": {
         "kill_multiplier": 1.0,
@@ -2106,7 +2106,7 @@ async def on_message(message):
     if is_kill_gif:
         defender_roles = [r.name for r in member_to_timeout.roles]
         defender_vow = get_active_vow(defender_roles)
-        if defender_vow == "Guh Opt Out" and GMM_ROLE not in author_roles:
+        if defender_vow == "Guh Opt Out":
             await message.channel.send(f"{member_to_timeout.mention} has opted out of Guh and can't be timed out.")
             return
 

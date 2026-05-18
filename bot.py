@@ -145,7 +145,8 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/storm-rain-raining-gif-12250202288703677838",
     "https://tenor.com/view/death-of-the-self-gay-fluff-shigadeku-shigaraki-deku-gif-24033047",
     "https://tenor.com/view/gay-anime-anime-gay-gif-18237425560170880188",
-    "https://tenor.com/view/pluh-veilbound-gif-4315180366045476816"
+    "https://tenor.com/view/pluh-veilbound-gif-4315180366045476816",
+    "https://tenor.com/view/choso-rose-gif-6467400017691708526"
 ]
 
 CLASH_GIFS = [

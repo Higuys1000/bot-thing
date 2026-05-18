@@ -145,8 +145,7 @@ UNTIMEOUT_GIFS = [
     "https://tenor.com/view/storm-rain-raining-gif-12250202288703677838",
     "https://tenor.com/view/death-of-the-self-gay-fluff-shigadeku-shigaraki-deku-gif-24033047",
     "https://tenor.com/view/gay-anime-anime-gay-gif-18237425560170880188",
-    "https://tenor.com/view/pluh-veilbound-gif-4315180366045476816",
-    "https://tenor.com/view/choso-rose-gif-6467400017691708526"
+    "https://tenor.com/view/pluh-veilbound-gif-4315180366045476816"
 ]
 
 CLASH_GIFS = [
@@ -167,6 +166,7 @@ CLASH_GIFS_GMM = [
 MIRACLE_BLOCK_GIF = "https://cdn.discordapp.com/attachments/1395472869991121078/1497282590267281448/runningtrue.gif"
 
 CLASH_WINDOW_SECONDS = 5
+CLASH_EXTENDED_WINDOW_SECONDS = 15
 
 # =========================
 # DEFAULT ROLE CONFIG
@@ -1987,7 +1987,9 @@ async def start_webhook_server():
 
 async def finalize_clash(clash_id: int):
     try:
-        await asyncio.sleep(CLASH_WINDOW_SECONDS)
+        clash_data_peek = pending_clashes.get(clash_id)
+        sleep_for = clash_data_peek.get("window_seconds", CLASH_WINDOW_SECONDS) if clash_data_peek else CLASH_WINDOW_SECONDS
+        await asyncio.sleep(sleep_for)
 
         clash_data = pending_clashes.pop(clash_id, None)
         if not clash_data:
@@ -2179,7 +2181,8 @@ async def on_message(message):
                 clash_head_lookup[message.id] = clash_id
                 if not clash_data["task"].done():
                     clash_data["task"].cancel()
-                await message.channel.send(f"⚔️ {participants[1].mention} is fighting back! Reply to their GIF to join!")
+                clash_data["window_seconds"] = CLASH_EXTENDED_WINDOW_SECONDS
+                await message.channel.send(f"⚔️ {participants[1].mention} is fighting back! Reply to their GIF to join! ({CLASH_EXTENDED_WINDOW_SECONDS}s window)")
                 clash_data["task"] = asyncio.create_task(finalize_clash(clash_id))
             elif len(participants) < 10:
                 already_in = uid in [p.id for p in participants]
@@ -2192,8 +2195,9 @@ async def on_message(message):
                         clash_head_lookup[message.id] = clash_id
                         if not clash_data["task"].done():
                             clash_data["task"].cancel()
+                        clash_data["window_seconds"] = CLASH_EXTENDED_WINDOW_SECONDS
                         await message.channel.send(
-                            f"{new_member.mention} jumped into the clash! ⚔️ **{len(participants)} fighters** — reply to their GIF to also join!"
+                            f"{new_member.mention} jumped into the clash! ⚔️ **{len(participants)} fighters** — reply to their GIF to also join! ({CLASH_EXTENDED_WINDOW_SECONDS}s window)"
                         )
                         clash_data["task"] = asyncio.create_task(finalize_clash(clash_id))
         await bot.process_commands(message)
@@ -2516,6 +2520,7 @@ async def on_message(message):
             "vow_str": vow_str,
             "user_id": uid,
             "task": None,
+            "window_seconds": CLASH_WINDOW_SECONDS,
         }
         pending_clashes[clash_id] = clash_entry
         clash_head_lookup[message.id] = clash_id

@@ -447,6 +447,79 @@ def save_save_gifs(guild_id: int, gifs: list[str]):
         print(f"[gifs] Redis save save gifs failed for {guild_id}: {e}")
 
 
+# =========================
+# PAGINATED LIST (anyone can use)
+# =========================
+
+async def run_paginated_list(channel: discord.TextChannel, user: discord.Member, guild: discord.Guild, gif_type: str, initial_send=None):
+    """
+    Paginated browser for kill/save GIFs. Anyone can use.
+    `initial_send` is an awaitable-returning callable for the first send (used to
+    cleanly handle slash command's interaction.response.send_message vs channel.send).
+    """
+    current = get_kill_gifs(guild.id) if gif_type == "kill" else get_save_gifs(guild.id)
+    if not current:
+        msg_text = f"No {gif_type} GIFs configured for this server."
+        if initial_send:
+            await initial_send(msg_text)
+        else:
+            await channel.send(msg_text)
+        return
+
+    PAGE_SIZE = 5
+    total_pages = (len(current) + PAGE_SIZE - 1) // PAGE_SIZE
+    page = 0
+
+    def build_page(p: int) -> str:
+        start = p * PAGE_SIZE
+        lines = [f"{start + j + 1}. {current[start + j]}" for j in range(min(PAGE_SIZE, len(current) - start))]
+        nav_hints = []
+        if p > 0:
+            nav_hints.append("`back`")
+        if p + 1 < total_pages:
+            nav_hints.append("`next`")
+        nav_str = " · ".join(nav_hints) if nav_hints else "*(only page)*"
+        return (
+            f"**{gif_type.capitalize()} GIFs — page {p + 1}/{total_pages} ({len(current)} total):**\n"
+            + "\n".join(lines)
+            + f"\n\nNavigate: {nav_str} · type anything else to exit"
+        )
+
+    if initial_send:
+        list_msg = await initial_send(build_page(page))
+    else:
+        list_msg = await channel.send(build_page(page))
+
+    def check(m):
+        return m.author.id == user.id and m.channel.id == channel.id
+
+    while True:
+        try:
+            msg = await bot.wait_for("message", timeout=60.0, check=check)
+        except asyncio.TimeoutError:
+            try:
+                await list_msg.edit(content=build_page(page) + "\n\n*(timed out)*")
+            except Exception:
+                pass
+            return
+
+        nav = msg.content.strip().lower()
+        if nav == "next" and page + 1 < total_pages:
+            page += 1
+            try:
+                await list_msg.edit(content=build_page(page))
+            except Exception:
+                pass
+        elif nav == "back" and page > 0:
+            page -= 1
+            try:
+                await list_msg.edit(content=build_page(page))
+            except Exception:
+                pass
+        else:
+            return
+
+
 async def run_gif_setup_session(ctx_or_interaction, guild: discord.Guild, user: discord.Member, channel, gif_type: str):
     """
     Interactive session for mods to add kill or save GIFs.
@@ -456,7 +529,10 @@ async def run_gif_setup_session(ctx_or_interaction, guild: discord.Guild, user: 
     if session_key in active_setup_sessions:
         msg = f"You already have an active {gif_type} GIF setup session. Type `done` to finish it or `cancel` to abort."
         if isinstance(ctx_or_interaction, discord.Interaction):
-            await ctx_or_interaction.response.send_message(msg, ephemeral=True)
+            if not ctx_or_interaction.response.is_done():
+                await ctx_or_interaction.response.send_message(msg, ephemeral=True)
+            else:
+                await ctx_or_interaction.followup.send(msg, ephemeral=True)
         else:
             await channel.send(msg)
         return
@@ -493,7 +569,10 @@ async def run_gif_setup_session(ctx_or_interaction, guild: discord.Guild, user: 
     )
 
     if isinstance(ctx_or_interaction, discord.Interaction):
-        await ctx_or_interaction.response.send_message(intro)
+        if not ctx_or_interaction.response.is_done():
+            await ctx_or_interaction.response.send_message(intro)
+        else:
+            await channel.send(intro)
     else:
         await channel.send(intro)
 
@@ -1069,7 +1148,10 @@ async def run_setup_roles_session(ctx_or_interaction, guild: discord.Guild, user
     if session_key in active_setup_sessions:
         msg = "You already have an active setup session. Finish or cancel it first."
         if isinstance(ctx_or_interaction, discord.Interaction):
-            await ctx_or_interaction.response.send_message(msg, ephemeral=True)
+            if not ctx_or_interaction.response.is_done():
+                await ctx_or_interaction.response.send_message(msg, ephemeral=True)
+            else:
+                await ctx_or_interaction.followup.send(msg, ephemeral=True)
         else:
             await channel.send(msg)
         return
@@ -1079,23 +1161,16 @@ async def run_setup_roles_session(ctx_or_interaction, guild: discord.Guild, user
     def check(m):
         return m.author.id == user.id and m.channel.id == channel.id
 
-    async def ask(prompt: str) -> str | None:
-        await channel.send(prompt)
-        try:
-            msg = await bot.wait_for("message", timeout=120.0, check=check)
-            return msg
-        except asyncio.TimeoutError:
-            active_setup_sessions.pop(session_key, None)
-            await channel.send("⏱️ Setup timed out. No changes were saved.")
-            return None
-
     intro = (
         "**⚙️ Server Setup — Step 1/4: Default GIF Role**\n\n"
         "Which role should be required to use GIFs?\n"
         "Mention a role (e.g. `@Bum`), type `clear` to allow everyone, or `cancel` to abort."
     )
     if isinstance(ctx_or_interaction, discord.Interaction):
-        await ctx_or_interaction.response.send_message(intro)
+        if not ctx_or_interaction.response.is_done():
+            await ctx_or_interaction.response.send_message(intro)
+        else:
+            await channel.send(intro)
     else:
         await channel.send(intro)
 
@@ -1511,6 +1586,7 @@ def build_help_embed(guild_id: int) -> discord.Embed:
             "`!help` — show this message\n"
             "`!vows` — show all Binding Vow descriptions\n"
             "`!vote` — get the vote link for a 25% cooldown discount\n"
+            "`!list [kill|save]` — browse this server's kill or save GIFs (anyone)\n"
             "`@bot` or `!cooldown [@user]` — check your (or someone else's) cooldown\n"
             "`!resetcooldown @user [kill|save|both]` — reset a cooldown *(mods only)*\n"
             "`!setup view` — view current server config *(mods only)*\n"
@@ -1602,6 +1678,15 @@ async def prefix_cooldown(ctx, target: discord.Member = None):
     await ctx.send(msg)
 
 
+@bot.command(name="list")
+async def prefix_list(ctx, gif_type: str = "kill"):
+    gif_type = gif_type.lower()
+    if gif_type not in ("kill", "save"):
+        await ctx.send("Usage: `!list [kill|save]` — defaults to `kill`.")
+        return
+    await run_paginated_list(ctx.channel, ctx.author, ctx.guild, gif_type)
+
+
 @bot.command(name="setup")
 async def prefix_setup(ctx, subcommand: str = None):
     if subcommand is None:
@@ -1621,7 +1706,6 @@ async def prefix_setup(ctx, subcommand: str = None):
             await ctx.send(f"{ctx.author.mention}, you need Manage Roles permission to do that.")
             return
         summary = build_setup_summary_with_guild(ctx.guild)
-        # Kill GIFs count
         kill_count = len(get_kill_gifs(ctx.guild.id))
         save_count = len(get_save_gifs(ctx.guild.id))
         kill_source = "custom" if kill_count != len(TARGET_GIFS) else "global default"
@@ -1744,6 +1828,72 @@ async def slash_resetcooldown(interaction: discord.Interaction, target: discord.
     save_cooldowns()
     label = "kill and save cooldowns" if which == "both" else f"{which} cooldown"
     await interaction.response.send_message(f"✅ Reset {label} for {target.mention}.")
+
+
+@bot.tree.command(name="list", description="Browse this server's kill or save GIFs")
+@app_commands.describe(gif_type="Which GIF list to view")
+@app_commands.choices(gif_type=[
+    app_commands.Choice(name="kill", value="kill"),
+    app_commands.Choice(name="save", value="save"),
+])
+async def slash_list(interaction: discord.Interaction, gif_type: str = "kill"):
+    if not interaction.guild:
+        await interaction.response.send_message("This command must be used in a server.", ephemeral=True)
+        return
+
+    async def initial_send(content: str):
+        await interaction.response.send_message(content)
+        return await interaction.original_response()
+
+    await run_paginated_list(interaction.channel, interaction.user, interaction.guild, gif_type, initial_send=initial_send)
+
+
+# ---- Slash /setup with subcommands ----
+setup_group = app_commands.Group(name="setup", description="Configure the bot for this server")
+
+
+@setup_group.command(name="view", description="View current server config (mods only)")
+async def slash_setup_view(interaction: discord.Interaction):
+    if not is_mod(interaction.user):
+        await interaction.response.send_message("You need the Manage Roles permission to do that.", ephemeral=True)
+        return
+    summary = build_setup_summary_with_guild(interaction.guild)
+    kill_count = len(get_kill_gifs(interaction.guild_id))
+    save_count = len(get_save_gifs(interaction.guild_id))
+    kill_source = "custom" if kill_count != len(TARGET_GIFS) else "global default"
+    save_source = "custom" if save_count != len(UNTIMEOUT_GIFS) else "global default"
+    await interaction.response.send_message(
+        f"**⚙️ Server Config:**\n{summary}\n\n"
+        f"**Kill GIFs:** {kill_count} ({kill_source})\n"
+        f"**Save GIFs:** {save_count} ({save_source})"
+    )
+
+
+@setup_group.command(name="roles", description="Configure default role, cooldown, and per-role settings (mods only)")
+async def slash_setup_roles(interaction: discord.Interaction):
+    if not is_mod(interaction.user):
+        await interaction.response.send_message("You need the Manage Roles permission to do that.", ephemeral=True)
+        return
+    await run_setup_roles_session(interaction, interaction.guild, interaction.user, interaction.channel)
+
+
+@setup_group.command(name="killgifs", description="Manage kill GIFs for this server (mods only)")
+async def slash_setup_killgifs(interaction: discord.Interaction):
+    if not is_mod(interaction.user):
+        await interaction.response.send_message("You need the Manage Roles permission to do that.", ephemeral=True)
+        return
+    await run_gif_setup_session(interaction, interaction.guild, interaction.user, interaction.channel, "kill")
+
+
+@setup_group.command(name="savegifs", description="Manage save GIFs for this server (mods only)")
+async def slash_setup_savegifs(interaction: discord.Interaction):
+    if not is_mod(interaction.user):
+        await interaction.response.send_message("You need the Manage Roles permission to do that.", ephemeral=True)
+        return
+    await run_gif_setup_session(interaction, interaction.guild, interaction.user, interaction.channel, "save")
+
+
+bot.tree.add_command(setup_group)
 
 
 # =========================

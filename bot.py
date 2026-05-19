@@ -281,10 +281,10 @@ def apply_vote_discount(hours: float, user_id: int) -> float:
 
 
 def vote_note(user_id: int) -> str:
-    """Returns a 'vote for 25% off' note if the user hasn't voted, else empty."""
+    """Returns a 'vote to reset' note if the user hasn't voted, else empty."""
     if has_active_vote(user_id):
         return ""
-    return "\n📥 *Tired of waiting? [Vote for 25% off cooldowns](<https://discordbotlist.com/bots/funnything/upvote>) for 12h!*"
+    return "\n📥 *Tired of waiting? [Vote to reset ALL your cooldowns + 25% off for 12h!](<https://discordbotlist.com/bots/funnything/upvote>)*"
 
 
 def load_server_settings() -> dict:
@@ -346,6 +346,42 @@ user_assigned_vows: dict[tuple[int, int], str] = {}
 user_vow_last_changed: dict[tuple[int, int], datetime] = {}
 
 DEFAULT_VOW_CHANGE_COOLDOWN_HOURS = 48.0  # 2 days
+
+
+def reset_user_all_cooldowns(user_id: int) -> int:
+    """
+    Wipes a user's cooldowns across every guild they have entries in.
+    Used when a user votes — they get a fresh-start across all servers.
+    Does NOT touch miracle_counts (a resource, not a cooldown),
+    user_assigned_vows (a setting), or vote_timestamps (the vote itself).
+    Returns the number of cooldown entries cleared (for logging/feedback).
+    """
+    cleared = 0
+
+    def _clear_dict_for_user(d):
+        nonlocal cleared
+        keys = [k for k in d if k[1] == user_id]
+        for k in keys:
+            d.pop(k, None)
+            cleared += 1
+
+    _clear_dict_for_user(last_kill_used)
+    _clear_dict_for_user(last_save_used)
+    _clear_dict_for_user(miracle_gain_cooldown)
+    _clear_dict_for_user(ragebait_last_used)
+    _clear_dict_for_user(user_vow_last_changed)
+
+    # Random Vow rolled CDs — null out both action slots
+    for k in [k for k in random_vow_cds if k[1] == user_id]:
+        random_vow_cds[k] = {"kill": None, "save": None}
+        cleared += 1
+
+    # Stack Vow charges — wipe back to full (empty list = max available)
+    for k in [k for k in stack_vow_charges if k[1] == user_id]:
+        stack_vow_charges[k] = {"kill": [], "save": []}
+        cleared += 1
+
+    return cleared
 
 
 def get_vow_change_cooldown(guild_id: int) -> float:
@@ -1652,9 +1688,11 @@ def build_help_embed(guild_id: int) -> discord.Embed:
         inline=False
     )
     embed.add_field(
-        name="📥 Vote for a Cooldown Discount",
+        name="📥 Vote for instant cooldown reset + discount",
         value=(
-            "Vote for the bot to get **25% off ALL your cooldowns** for 12 hours!\n"
+            "Vote for the bot and get:\n"
+            "• **All your cooldowns reset instantly** across every server\n"
+            "• **25% off ALL your cooldowns** for the next 12 hours\n"
             "[Click here to vote](https://discordbotlist.com/bots/funnything/upvote)"
         ),
         inline=False
@@ -2332,9 +2370,11 @@ VOTE_EMBED_COLOR = discord.Color.gold()
 
 def build_vote_embed(user_id: int) -> discord.Embed:
     embed = discord.Embed(
-        title="📥 Vote for a Cooldown Discount!",
+        title="📥 Vote for instant cooldown reset + discount!",
         description=(
-            "Vote for the bot on Discord Bot List and get **25% off ALL your cooldowns** for 12 hours!\n\n"
+            "Vote for the bot on Discord Bot List and get:\n"
+            "• ⚡ **ALL your cooldowns reset instantly** (kill, save, vow-change, etc.) across every server\n"
+            "• 💸 **25% off ALL your cooldowns** for the next 12 hours\n\n"
             "[🔗 Click here to vote](https://discordbotlist.com/bots/funnything/upvote)"
         ),
         color=VOTE_EMBED_COLOR,
@@ -2343,9 +2383,9 @@ def build_vote_embed(user_id: int) -> discord.Embed:
     if has_active_vote(user_id):
         expires = vote_expires_in(user_id)
         expires_str = str(expires).split('.')[0] if expires else "soon"
-        embed.add_field(name="✅ Your vote is active!", value=f"25% off cooldowns. Expires in **{expires_str}**.", inline=False)
+        embed.add_field(name="✅ Your 25% discount is active!", value=f"Expires in **{expires_str}**.", inline=False)
     else:
-        embed.add_field(name="No active vote", value="Vote now to unlock your discount!", inline=False)
+        embed.add_field(name="No active vote", value="Vote now to reset & unlock your discount!", inline=False)
     return embed
 
 
@@ -2379,14 +2419,18 @@ async def handle_dbl_webhook(request: web.Request) -> web.Response:
     except ValueError:
         return web.Response(status=400, text="Invalid user ID")
     vote_timestamps[user_id] = datetime.utcnow()
+    cleared = reset_user_all_cooldowns(user_id)
     save_cooldowns()
+    print(f"[vote] User {user_id} voted — cleared {cleared} cooldown entries.")
     try:
         user = await bot.fetch_user(user_id)
         if user:
             dm_embed = discord.Embed(
                 title="📥 Thanks for voting!",
                 description=(
-                    "You now have **25% off ALL your cooldowns** for the next 12 hours. Nice.\n\n"
+                    "Your reward:\n"
+                    "• **All your cooldowns have been reset** (kill, save, vow-change, etc.) across every server.\n"
+                    "• **25% off ALL your cooldowns** for the next 12 hours.\n\n"
                     "[Vote again after 12 hours](https://discordbotlist.com/bots/funnything/upvote)"
                 ),
                 color=VOTE_EMBED_COLOR

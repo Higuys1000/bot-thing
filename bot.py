@@ -171,6 +171,7 @@ CLASH_GIFS_GMM = [
 ]
 
 MIRACLE_BLOCK_GIF = "https://cdn.discordapp.com/attachments/1395472869991121078/1497282590267281448/runningtrue.gif"
+HAKARI_JACKPOT_GIF = "https://tenor.com/view/i-just-hit-the-jackpot-gameboyjones-hakari-green-screen-black-guy-gif-7781853818237960786"
 
 CLASH_WINDOW_SECONDS = 5
 CLASH_EXTENDED_WINDOW_SECONDS = 15
@@ -871,6 +872,11 @@ BINDING_VOWS = {
         "save_multiplier": 1.0,
         "description": "Kill GIFs don't timeout the target — instead puts their kill guh on CD for their normal duration. Ragebait ability CD is 1h. Save works normally.",
     },
+    "Black Flash Vow": {
+        "kill_multiplier": 1.2,
+        "save_multiplier": 1.2,
+        "description": "Kill & save CDs ×1.2. On each kill, 25% chance to land a Black Flash and time the target out for **2× longer**. Works in clashes too — only triggers for whoever delivers the timeout.",
+    },
 }
 
 STACK_VOW_MULTIPLIER = 2.0
@@ -881,6 +887,16 @@ MIRACLE_BLOCK_COST = 2
 
 MIRACLE_GAIN_COOLDOWN_HOURS = 1.0
 RAGEBAIT_COOLDOWN_HOURS = 1.0
+
+BLACK_FLASH_CHANCE = 0.25
+BLACK_FLASH_MULTIPLIER = 2.0
+
+
+def roll_black_flash(vow_name: str | None) -> bool:
+    """Returns True if a Black Flash triggers for this kill."""
+    if vow_name != "Black Flash Vow":
+        return False
+    return random.random() < BLACK_FLASH_CHANCE
 
 
 def get_active_vow(author_roles: list[str], guild_id: int | None = None, user_id: int | None = None) -> str | None:
@@ -2364,6 +2380,7 @@ async def finalize_clash(clash_id: int):
             original_target = participants[1]
             if random.random() < 0.36:
                 if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=251), channel):
+                    await channel.send(HAKARI_JACKPOT_GIF)
                     await channel.send(f"🎰 **JACKPOT!** {original_target.mention} muted 4m11s by {attacker.mention} [Hakari Vow] lmao")
             else:
                 if await try_timeout(attacker, discord.utils.utcnow() + timedelta(seconds=90), channel):
@@ -2373,8 +2390,17 @@ async def finalize_clash(clash_id: int):
         # No clash, just timeout
         if len(participants) == 2 and not clash_data.get("target_challenged"):
             original_target = participants[1]
+            black_flash = roll_black_flash(attacker_vow)
+            if black_flash:
+                actual_duration = int(actual_duration * BLACK_FLASH_MULTIPLIER)
             if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=actual_duration), channel):
-                await channel.send(f"{original_target.mention} has been timed out for {actual_duration}s by {attacker.mention}{vow_str} lmao")
+                if black_flash:
+                    await channel.send(
+                        f"⚡ **BLACK FLASH!** {attacker.mention}{vow_str} landed it — "
+                        f"{original_target.mention} timed out for **{actual_duration}s** (2×)!"
+                    )
+                else:
+                    await channel.send(f"{original_target.mention} has been timed out for {actual_duration}s by {attacker.mention}{vow_str} lmao")
             return
 
         # 1v1 clash
@@ -2409,6 +2435,7 @@ async def finalize_clash(clash_id: int):
             if attacker_wins and attacker_vow == "Hakari Vow":
                 if random.random() < 0.50:
                     if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=251), channel):
+                        await channel.send(HAKARI_JACKPOT_GIF)
                         await channel.send(f"🎰 **JACKPOT! (clash)** {original_target.mention} muted 4m11s by {attacker.mention} [Hakari Vow]")
                 else:
                     if await try_timeout(attacker, discord.utils.utcnow() + timedelta(seconds=90), channel):
@@ -2416,13 +2443,25 @@ async def finalize_clash(clash_id: int):
             elif not attacker_wins and d_vow == "Hakari Vow":
                 if random.random() < 0.50:
                     if await try_timeout(attacker, discord.utils.utcnow() + timedelta(seconds=251), channel):
+                        await channel.send(HAKARI_JACKPOT_GIF)
                         await channel.send(f"🎰 **JACKPOT! (clash)** {attacker.mention} muted 4m11s by {original_target.mention} [Hakari Vow]")
                 else:
                     if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=90), channel):
                         await channel.send(f"💀 {original_target.mention} [Hakari Vow] won but lost the gamble — muted 90s lmaooo")
             else:
+                # Roll Black Flash for the winner (whoever's delivering the timeout)
+                winner_vow = attacker_vow if attacker_wins else d_vow
+                black_flash = roll_black_flash(winner_vow)
+                if black_flash:
+                    actual_duration = int(actual_duration * BLACK_FLASH_MULTIPLIER)
                 if await try_timeout(loser, discord.utils.utcnow() + timedelta(seconds=actual_duration), channel):
-                    await channel.send(f"{winner.mention} WON\n{loser.mention} get timed out")
+                    if black_flash:
+                        await channel.send(
+                            f"⚡ **BLACK FLASH! (clash)** {winner.mention} [Black Flash Vow] landed it — "
+                            f"{loser.mention} timed out for **{actual_duration}s** (2×)!"
+                        )
+                    else:
+                        await channel.send(f"{winner.mention} WON\n{loser.mention} get timed out")
             return
 
         # Multi-way clash (3-10)
@@ -2450,7 +2489,18 @@ async def finalize_clash(clash_id: int):
                 break
 
         losers = [p for p in participants if p.id != winner.id]
-        await channel.send(f"🏆 {winner.mention} WON the {len(participants)}-way clash!")
+        # Roll Black Flash for the winner
+        winner_roles = [r.name for r in winner.roles]
+        winner_vow = get_active_vow(winner_roles, guild_id, winner.id)
+        black_flash = roll_black_flash(winner_vow)
+        if black_flash:
+            actual_duration = int(actual_duration * BLACK_FLASH_MULTIPLIER)
+            await channel.send(
+                f"⚡ **BLACK FLASH!** {winner.mention} [Black Flash Vow] WON the {len(participants)}-way clash and landed it — "
+                f"everyone else timed out for **{actual_duration}s** (2×)!"
+            )
+        else:
+            await channel.send(f"🏆 {winner.mention} WON the {len(participants)}-way clash!")
         for loser in losers:
             if await try_timeout(loser, discord.utils.utcnow() + timedelta(seconds=actual_duration), channel):
                 await channel.send(f"{loser.mention} gets timed out!")

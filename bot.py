@@ -341,6 +341,40 @@ miracle_gain_cooldown: dict[tuple[int, int], datetime] = {}
 ragebait_last_used: dict[tuple[int, int], datetime] = {}
 random_vow_cds: dict[tuple[int, int], dict[str, float | None]] = {}
 stack_vow_charges: dict[tuple[int, int], dict[str, list[datetime]]] = {}
+user_assigned_vows: dict[tuple[int, int], str] = {}
+user_vow_last_changed: dict[tuple[int, int], datetime] = {}
+
+DEFAULT_VOW_CHANGE_COOLDOWN_HOURS = 48.0  # 2 days
+
+
+def get_vow_change_cooldown(guild_id: int) -> float:
+    return server_settings.get(guild_id, {}).get("vow_change_cooldown_hours", DEFAULT_VOW_CHANGE_COOLDOWN_HOURS)
+
+
+def get_user_assigned_vow(guild_id: int, user_id: int) -> str | None:
+    return user_assigned_vows.get((guild_id, user_id))
+
+
+def set_user_assigned_vow(guild_id: int, user_id: int, vow_name: str | None):
+    key = (guild_id, user_id)
+    if vow_name is None:
+        user_assigned_vows.pop(key, None)
+    else:
+        user_assigned_vows[key] = vow_name
+    user_vow_last_changed[key] = datetime.utcnow()
+
+
+def get_vow_change_remaining(guild_id: int, user_id: int) -> timedelta:
+    """How long until the user can change their vow again. timedelta(0) if ready."""
+    last = user_vow_last_changed.get((guild_id, user_id))
+    if not last:
+        return timedelta(0)
+    cd_hours = get_vow_change_cooldown(guild_id)
+    elapsed = datetime.utcnow() - last
+    cd = timedelta(hours=cd_hours)
+    if elapsed >= cd:
+        return timedelta(0)
+    return cd - elapsed
 
 
 def _gk(guild_id: int, user_id: int) -> str:
@@ -382,6 +416,10 @@ def load_cooldowns():
             "kill": [datetime.fromisoformat(t) for t in charges.get("kill", [])],
             "save": [datetime.fromisoformat(t) for t in charges.get("save", [])],
         }
+    for k, vow in data.get("user_assigned_vows", {}).items():
+        user_assigned_vows[_parse_gk(k)] = vow
+    for k, ts in data.get("user_vow_last_changed", {}).items():
+        user_vow_last_changed[_parse_gk(k)] = datetime.fromisoformat(ts)
     print(f"[cooldowns] Loaded {len(data.get('last_kill_used', {}))} kill CD entries.")
 
 
@@ -404,6 +442,8 @@ def save_cooldowns():
             }
             for k, charges in stack_vow_charges.items()
         },
+        "user_assigned_vows": {_gk(*k): v for k, v in user_assigned_vows.items()},
+        "user_vow_last_changed": {_gk(*k): v.isoformat() for k, v in user_vow_last_changed.items()},
     }
     try:
         redis.set("cooldowns", json.dumps(data))
@@ -843,13 +883,27 @@ MIRACLE_GAIN_COOLDOWN_HOURS = 1.0
 RAGEBAIT_COOLDOWN_HOURS = 1.0
 
 
-def get_active_vow(author_roles: list[str]) -> str | None:
+def get_active_vow(author_roles: list[str], guild_id: int | None = None, user_id: int | None = None) -> str | None:
+    """
+    Returns the active binding vow for a user.
+
+    Priority:
+      1. Role-based vows (admin-assigned, can be multiple = CONFLICT)
+      2. User-self-assigned vow (via !vows create) — only used if no role-based vow
+
+    The (guild_id, user_id) args are optional; pass them to enable user-self-assigned vow lookup.
+    """
     held = [vow for vow in BINDING_VOWS if vow in author_roles]
-    if len(held) == 0:
-        return None
     if len(held) == 1:
         return held[0]
-    return "CONFLICT"
+    if len(held) > 1:
+        return "CONFLICT"
+    # No role-based vow — fall back to user-self-assigned
+    if guild_id is not None and user_id is not None:
+        assigned = get_user_assigned_vow(guild_id, user_id)
+        if assigned and assigned in BINDING_VOWS:
+            return assigned
+    return None
 
 
 def apply_vow(base_cooldown_hours: float, action: str, vow_name: str | None) -> float:
@@ -1402,7 +1456,7 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
         base_cd = default_cd
         role_label = f"default ({default_cd}h)"
 
-    vow = get_active_vow(author_roles)
+    vow = get_active_vow(author_roles, guild_id, member.id)
     vow_str = format_vow_label(vow)
     now = datetime.utcnow()
     uid = member.id
@@ -1592,7 +1646,10 @@ def build_help_embed(guild_id: int) -> discord.Embed:
         name="Commands",
         value=(
             "`!help` — show this message\n"
-            "`!vows` — show all Binding Vow descriptions\n"
+            "`!vows` — show all Binding Vow descriptions + your status\n"
+            "`!vows create` — pick (or remove with `none`) your own binding vow\n"
+            "`!vows status` — check your current vow & change cooldown\n"
+            "`!vows cooldown [hours]` — view/set vow-change cooldown *(mods only to set)*\n"
             "`!vote` — get the vote link for a 25% cooldown discount\n"
             "`!list [kill|save]` — browse this server's kill or save GIFs (anyone)\n"
             "`@bot` or `!cooldown [@user]` — check your (or someone else's) cooldown\n"
@@ -1610,12 +1667,195 @@ def build_help_embed(guild_id: int) -> discord.Embed:
 def build_binding_vows_embed() -> discord.Embed:
     embed = discord.Embed(
         title="⛩️ Binding Vows",
-        description="People with a role of this name get special effects listed.",
+        description=(
+            "Vows grant powerful effects but lock you into restrictions. "
+            "Use `!vows create` to pick one yourself, or have an admin assign you a vow role.\n"
+            "Type `!vows create` then `none` later to remove your vow."
+        ),
         color=discord.Color.dark_red()
     )
     for name, data in BINDING_VOWS.items():
         embed.add_field(name=name, value=data["description"], inline=False)
     return embed
+
+
+def build_user_vow_status(member: discord.Member, guild_id: int) -> str:
+    """Tells the user their current vow, where it came from (role vs self), and cooldown."""
+    author_roles = [r.name for r in member.roles]
+    role_vows = [v for v in BINDING_VOWS if v in author_roles]
+    self_vow = get_user_assigned_vow(guild_id, member.id)
+    cd_hours = get_vow_change_cooldown(guild_id)
+    remaining = get_vow_change_remaining(guild_id, member.id)
+
+    lines = []
+    if len(role_vows) > 1:
+        lines.append(f"⚠️ You have **multiple vow roles** ({', '.join(role_vows)}) — vows are being ignored until this is resolved.")
+    elif len(role_vows) == 1:
+        lines.append(f"🎭 You have the **{role_vows[0]}** vow (assigned by role — overrides self-pick).")
+        if self_vow:
+            lines.append(f"💤 Your self-picked vow `{self_vow}` is dormant while the role vow is active.")
+    elif self_vow:
+        lines.append(f"⛩️ Your current vow: **{self_vow}** (self-picked)")
+    else:
+        lines.append("📭 You don't have a binding vow.")
+
+    if remaining.total_seconds() > 0:
+        lines.append(f"⏳ Next vow change available in **{str(remaining).split('.')[0]}** (cooldown: {cd_hours:g}h).")
+    else:
+        lines.append(f"✅ You can change your vow now with `!vows create` (next change will lock for {cd_hours:g}h).")
+
+    return "\n".join(lines)
+
+
+async def run_vow_create_session(ctx_or_interaction, guild: discord.Guild, user: discord.Member, channel):
+    """Interactive vow picker. Anyone can use, with per-server cooldown."""
+    session_key = f"{user.id}:vowcreate"
+    if session_key in active_setup_sessions:
+        msg = "You already have an active vow picker session. Finish or cancel it first."
+        if isinstance(ctx_or_interaction, discord.Interaction):
+            if not ctx_or_interaction.response.is_done():
+                await ctx_or_interaction.response.send_message(msg, ephemeral=True)
+            else:
+                await ctx_or_interaction.followup.send(msg, ephemeral=True)
+        else:
+            await channel.send(msg)
+        return
+
+    # Cooldown check
+    remaining = get_vow_change_remaining(guild.id, user.id)
+    cd_hours = get_vow_change_cooldown(guild.id)
+    if remaining.total_seconds() > 0:
+        msg = (
+            f"{user.mention}, you can't change your vow yet. "
+            f"Next change in **{str(remaining).split('.')[0]}** "
+            f"(cooldown: {cd_hours:g}h)."
+        )
+        if isinstance(ctx_or_interaction, discord.Interaction):
+            if not ctx_or_interaction.response.is_done():
+                await ctx_or_interaction.response.send_message(msg, ephemeral=True)
+            else:
+                await ctx_or_interaction.followup.send(msg, ephemeral=True)
+        else:
+            await channel.send(msg)
+        return
+
+    # Warn if user has a role-based vow (it would override anything they pick)
+    author_roles = [r.name for r in user.roles]
+    role_vow_names = [v for v in BINDING_VOWS if v in author_roles]
+    role_warning = ""
+    if role_vow_names:
+        role_warning = (
+            f"\n\n⚠️ **Note:** You have the role-based vow(s): **{', '.join(role_vow_names)}**. "
+            f"Any vow you pick here will be **dormant** until that role is removed."
+        )
+
+    current = get_user_assigned_vow(guild.id, user.id)
+    current_str = f"Your current self-picked vow: **{current}**" if current else "You don't have a self-picked vow yet."
+
+    vow_lines = []
+    for i, (name, data) in enumerate(BINDING_VOWS.items(), 1):
+        vow_lines.append(f"**{i}.** `{name}` — {data['description']}")
+
+    intro = (
+        f"**⛩️ Pick a Binding Vow**\n\n"
+        f"{current_str}\n\n"
+        + "\n".join(vow_lines) +
+        f"\n\n**Reply with:**\n"
+        f"• The vow's number (`1`–`{len(BINDING_VOWS)}`) or exact name to pick it\n"
+        f"• `none` — remove your current self-picked vow\n"
+        f"• `cancel` — exit without changing anything\n\n"
+        f"⚠️ Once you confirm, your vow is locked in for **{cd_hours:g}h** before you can change it again."
+        f"{role_warning}"
+    )
+
+    active_setup_sessions[session_key] = guild.id
+
+    if isinstance(ctx_or_interaction, discord.Interaction):
+        if not ctx_or_interaction.response.is_done():
+            await ctx_or_interaction.response.send_message(intro)
+        else:
+            await channel.send(intro)
+    else:
+        await channel.send(intro)
+
+    def check(m):
+        return m.author.id == user.id and m.channel.id == channel.id
+
+    try:
+        msg = await bot.wait_for("message", timeout=120.0, check=check)
+    except asyncio.TimeoutError:
+        active_setup_sessions.pop(session_key, None)
+        await channel.send(f"⏱️ {user.mention}, vow picker timed out. No changes saved.")
+        return
+
+    text = msg.content.strip().lower()
+
+    if text == "cancel":
+        active_setup_sessions.pop(session_key, None)
+        await channel.send(f"❌ {user.mention}, vow picker cancelled. No changes saved.")
+        return
+
+    chosen: str | None | bool = False  # False = invalid, None = explicit "none", str = vow name
+
+    if text == "none":
+        chosen = None
+    elif text.isdigit():
+        idx = int(text)
+        if 1 <= idx <= len(BINDING_VOWS):
+            chosen = list(BINDING_VOWS.keys())[idx - 1]
+    else:
+        # Try matching by name (case-insensitive)
+        for name in BINDING_VOWS:
+            if name.lower() == text:
+                chosen = name
+                break
+
+    if chosen is False:
+        active_setup_sessions.pop(session_key, None)
+        await channel.send(
+            f"❌ {user.mention}, `{msg.content.strip()}` isn't a valid choice. Run `!vows create` again to retry."
+        )
+        return
+
+    # Check: if user is removing a vow they don't have, no point burning cooldown
+    if chosen is None and current is None:
+        active_setup_sessions.pop(session_key, None)
+        await channel.send(f"{user.mention}, you don't have a self-picked vow to remove. No changes made.")
+        return
+
+    # Check: same vow as current
+    if chosen is not None and chosen == current:
+        active_setup_sessions.pop(session_key, None)
+        await channel.send(f"{user.mention}, you already have the **{chosen}** vow. No changes made.")
+        return
+
+    set_user_assigned_vow(guild.id, user.id, chosen)
+    # Reset associated transient state on vow change to keep things clean
+    gid = guild.id
+    uid = user.id
+    last_kill_used.pop((gid, uid), None)
+    last_save_used.pop((gid, uid), None)
+    if (gid, uid) in random_vow_cds:
+        random_vow_cds[(gid, uid)] = {"kill": None, "save": None}
+    if (gid, uid) in stack_vow_charges:
+        stack_vow_charges[(gid, uid)] = {"kill": [], "save": []}
+    miracle_counts.pop((gid, uid), None)
+    save_cooldowns()
+
+    active_setup_sessions.pop(session_key, None)
+
+    if chosen is None:
+        await channel.send(
+            f"✅ {user.mention}, your self-picked vow has been removed. "
+            f"Your kill/save cooldowns and vow state have been reset.\n"
+            f"⏳ You can pick another vow in **{cd_hours:g}h**."
+        )
+    else:
+        await channel.send(
+            f"⛩️ {user.mention} has taken the **{chosen}** Binding Vow!\n"
+            f"_{BINDING_VOWS[chosen]['description']}_\n"
+            f"⏳ Locked in for **{cd_hours:g}h** before you can change again."
+        )
 
 
 # =========================
@@ -1675,8 +1915,55 @@ async def prefix_help(ctx):
 
 
 @bot.command(name="vows")
-async def prefix_vows(ctx):
-    await ctx.send(embed=build_binding_vows_embed())
+async def prefix_vows(ctx, subcommand: str = None, *args):
+    if subcommand is None:
+        # Show vow list + user's current status
+        await ctx.send(embed=build_binding_vows_embed())
+        await ctx.send(build_user_vow_status(ctx.author, ctx.guild.id))
+        return
+
+    sub = subcommand.lower()
+
+    if sub == "create":
+        await run_vow_create_session(ctx, ctx.guild, ctx.author, ctx.channel)
+        return
+
+    if sub == "cooldown":
+        if not is_mod(ctx.author):
+            await ctx.send(f"{ctx.author.mention}, you need Manage Roles permission to do that.")
+            return
+        if not args:
+            current = get_vow_change_cooldown(ctx.guild.id)
+            await ctx.send(
+                f"⛩️ Current vow-change cooldown: **{current:g}h**\n"
+                f"Set it with `!vows cooldown <hours>` — e.g. `!vows cooldown 48` for 2 days."
+            )
+            return
+        try:
+            hours = float(args[0])
+            if hours < 0:
+                raise ValueError
+        except ValueError:
+            await ctx.send("⚠️ Cooldown must be a non-negative number (in hours). e.g. `!vows cooldown 48`")
+            return
+        if ctx.guild.id not in server_settings:
+            server_settings[ctx.guild.id] = {}
+        server_settings[ctx.guild.id]["vow_change_cooldown_hours"] = hours
+        save_server_settings()
+        await ctx.send(f"✅ Vow-change cooldown set to **{hours:g}h** for this server.")
+        return
+
+    if sub == "status":
+        await ctx.send(build_user_vow_status(ctx.author, ctx.guild.id))
+        return
+
+    await ctx.send(
+        f"Unknown subcommand `{subcommand}`. Try:\n"
+        f"`!vows` — show all vows + your status\n"
+        f"`!vows create` — pick (or remove with `none`) your own binding vow\n"
+        f"`!vows status` — check your current vow & cooldown\n"
+        f"`!vows cooldown [hours]` — view or set vow-change cooldown *(mods only)*"
+    )
 
 
 @bot.command(name="cooldown")
@@ -1790,9 +2077,56 @@ async def slash_help(interaction: discord.Interaction):
     await interaction.response.send_message(embed=build_help_embed(interaction.guild_id))
 
 
-@bot.tree.command(name="vows", description="Show all Binding Vow descriptions")
-async def slash_vows(interaction: discord.Interaction):
+vows_group = app_commands.Group(name="vows", description="View binding vows and manage your own")
+
+
+@vows_group.command(name="list", description="Show all Binding Vow descriptions and your current vow status")
+async def slash_vows_list(interaction: discord.Interaction):
     await interaction.response.send_message(embed=build_binding_vows_embed())
+    if interaction.guild:
+        await interaction.followup.send(build_user_vow_status(interaction.user, interaction.guild_id))
+
+
+@vows_group.command(name="create", description="Pick (or remove with 'none') your own binding vow")
+async def slash_vows_create(interaction: discord.Interaction):
+    if not interaction.guild:
+        await interaction.response.send_message("Must be used in a server.", ephemeral=True)
+        return
+    await run_vow_create_session(interaction, interaction.guild, interaction.user, interaction.channel)
+
+
+@vows_group.command(name="status", description="Check your current binding vow and cooldown")
+async def slash_vows_status(interaction: discord.Interaction):
+    if not interaction.guild:
+        await interaction.response.send_message("Must be used in a server.", ephemeral=True)
+        return
+    await interaction.response.send_message(build_user_vow_status(interaction.user, interaction.guild_id))
+
+
+@vows_group.command(name="cooldown", description="View or set the vow-change cooldown for this server (mods only to set)")
+@app_commands.describe(hours="New cooldown in hours (omit to view current)")
+async def slash_vows_cooldown(interaction: discord.Interaction, hours: float = None):
+    if hours is None:
+        current = get_vow_change_cooldown(interaction.guild_id)
+        await interaction.response.send_message(
+            f"⛩️ Current vow-change cooldown: **{current:g}h**\n"
+            f"Mods can set it by passing the `hours` option."
+        )
+        return
+    if not is_mod(interaction.user):
+        await interaction.response.send_message("You need Manage Roles permission to change this.", ephemeral=True)
+        return
+    if hours < 0:
+        await interaction.response.send_message("Cooldown must be non-negative.", ephemeral=True)
+        return
+    if interaction.guild_id not in server_settings:
+        server_settings[interaction.guild_id] = {}
+    server_settings[interaction.guild_id]["vow_change_cooldown_hours"] = hours
+    save_server_settings()
+    await interaction.response.send_message(f"✅ Vow-change cooldown set to **{hours:g}h** for this server.")
+
+
+bot.tree.add_command(vows_group)
 
 
 @bot.tree.command(name="cooldown", description="Check your (or someone else's) cooldown status")
@@ -2048,7 +2382,7 @@ async def finalize_clash(clash_id: int):
             original_target = participants[1]
             attacker_roles = [r.name for r in attacker.roles]
             d_roles = [r.name for r in original_target.roles]
-            d_vow = get_active_vow(d_roles)
+            d_vow = get_active_vow(d_roles, guild_id, original_target.id)
             attacker_power = get_role_power(attacker_roles, guild_id)
             defender_power = get_role_power(d_roles, guild_id)
 
@@ -2253,7 +2587,7 @@ async def on_message(message):
         base_cd = default_cd
         role_label = f"default ({default_cd}h)"
 
-    vow = get_active_vow(author_roles)
+    vow = get_active_vow(author_roles, gid, uid)
     now = datetime.utcnow()
     action = "kill" if is_kill_gif else "save"
 
@@ -2268,7 +2602,7 @@ async def on_message(message):
     # =========================
     if is_kill_gif:
         defender_roles = [r.name for r in member_to_timeout.roles]
-        defender_vow = get_active_vow(defender_roles)
+        defender_vow = get_active_vow(defender_roles, gid, member_to_timeout.id)
         if defender_vow == "Guh Opt Out":
             await message.channel.send(f"{member_to_timeout.mention} has opted out of Guh and can't be timed out.")
             return
@@ -2366,7 +2700,7 @@ async def on_message(message):
 
                 if is_kill_gif:
                     target_roles = [r.name for r in member_to_timeout.roles]
-                    target_vow = get_active_vow(target_roles)
+                    target_vow = get_active_vow(target_roles, gid, member_to_timeout.id)
                     if target_vow == "Miracle Vow":
                         if not can_gain_miracle_from_failed_timeout(gid, member_to_timeout.id):
                             await message.channel.send(
@@ -2437,7 +2771,7 @@ async def on_message(message):
                     else:
                         await message.channel.send(f"✨ {message.author.mention} got a miracle for saving! They now have **{new_count}/{MIRACLE_MAX}** miracles.")
                 saved_roles = [r.name for r in member_to_timeout.roles]
-                saved_vow = get_active_vow(saved_roles)
+                saved_vow = get_active_vow(saved_roles, gid, member_to_timeout.id)
                 if saved_vow == "Miracle Vow":
                     new_count = add_miracle(gid, member_to_timeout.id)
                     save_cooldowns()
@@ -2495,7 +2829,7 @@ async def on_message(message):
 
         # Miracle block check
         defender_roles_list = [r.name for r in original_target.roles]
-        defender_vow_check = get_active_vow(defender_roles_list)
+        defender_vow_check = get_active_vow(defender_roles_list, gid, original_target.id)
         if defender_vow_check == "Miracle Vow":
             miracles = get_miracle_count(gid, original_target.id)
             if miracles >= MIRACLE_BLOCK_COST:

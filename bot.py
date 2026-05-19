@@ -173,7 +173,7 @@ CLASH_GIFS_GMM = [
 MIRACLE_BLOCK_GIF = "https://cdn.discordapp.com/attachments/1395472869991121078/1497282590267281448/runningtrue.gif"
 HAKARI_JACKPOT_GIF = "https://tenor.com/view/i-just-hit-the-jackpot-gameboyjones-hakari-green-screen-black-guy-gif-7781853818237960786"
 
-CLASH_WINDOW_SECONDS = 6
+CLASH_WINDOW_SECONDS = 5
 CLASH_EXTENDED_WINDOW_SECONDS = 15
 
 # =========================
@@ -277,8 +277,10 @@ def apply_vote_discount(hours: float, user_id: int) -> float:
 
 
 def vote_note(user_id: int) -> str:
-    """No-op: voting no longer grants a discount, so the inline nudge is removed."""
-    return ""
+    """Returns a 'vote to reset' nudge if the user hasn't voted recently, else empty."""
+    if has_active_vote(user_id):
+        return ""
+    return "\n📥 *Tired of waiting? [Vote to reset all your cooldowns!](<https://discordbotlist.com/bots/funnything/upvote>)*"
 
 
 def load_server_settings() -> dict:
@@ -346,8 +348,11 @@ def reset_user_all_cooldowns(user_id: int) -> int:
     """
     Wipes a user's cooldowns across every guild they have entries in.
     Used when a user votes — they get a fresh-start across all servers.
-    Does NOT touch miracle_counts (a resource, not a cooldown),
-    user_assigned_vows (a setting), or vote_timestamps (the vote itself).
+    Does NOT touch:
+      - miracle_counts (a resource, not a cooldown)
+      - user_assigned_vows (a setting)
+      - user_vow_last_changed (vow-change CD is intentionally preserved so voting can't be used to bypass vow lockout)
+      - vote_timestamps (the vote itself)
     Returns the number of cooldown entries cleared (for logging/feedback).
     """
     cleared = 0
@@ -363,7 +368,6 @@ def reset_user_all_cooldowns(user_id: int) -> int:
     _clear_dict_for_user(last_save_used)
     _clear_dict_for_user(miracle_gain_cooldown)
     _clear_dict_for_user(ragebait_last_used)
-    _clear_dict_for_user(user_vow_last_changed)
 
     # Random Vow rolled CDs — null out both action slots
     for k in [k for k in random_vow_cds if k[1] == user_id]:
@@ -2360,8 +2364,9 @@ def build_vote_embed(user_id: int) -> discord.Embed:
     embed = discord.Embed(
         title="📥 Vote to reset your cooldowns!",
         description=(
-            "Vote for the bot on Discord Bot List to **instantly reset ALL your cooldowns** "
-            "(kill, save, vow-change, miracle gain, ragebait, random/stack vow CDs) across every server.\n\n"
+            "Vote for the bot on Discord Bot List to **instantly reset your cooldowns** "
+            "(kill, save, miracle gain, ragebait, random/stack vow CDs) across every server.\n"
+            "_Vow-change cooldown is **not** reset — that one's intentionally locked._\n\n"
             "[🔗 Click here to vote](https://discordbotlist.com/bots/funnything/upvote)"
         ),
         color=VOTE_EMBED_COLOR,
@@ -2419,7 +2424,8 @@ async def handle_dbl_webhook(request: web.Request) -> web.Response:
             dm_embed = discord.Embed(
                 title="📥 Thanks for voting!",
                 description=(
-                    "**All your cooldowns have been reset** (kill, save, vow-change, miracle gain, ragebait, random/stack vow CDs) across every server.\n\n"
+                    "**Your cooldowns have been reset** (kill, save, miracle gain, ragebait, random/stack vow CDs) across every server.\n"
+                    "_Your vow-change cooldown is **not** reset — it's intentionally locked so voting can't bypass vow lockout._\n\n"
                     "[Vote again after 12 hours](https://discordbotlist.com/bots/funnything/upvote)"
                 ),
                 color=VOTE_EMBED_COLOR

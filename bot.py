@@ -1091,6 +1091,18 @@ def roll_random_vow_timeout() -> int:
 # =========================
 
 MODLOG_CHANNEL = "modlog"
+
+# =========================
+# #i-joined GATEKEEPER CONFIG
+# =========================
+# In the configured guild's configured channel, any message that doesn't contain
+# "i join" (case-insensitive substring) gets deleted, the author gets timed out,
+# and the author gets DM'd. Admins are exempt.
+IJOINED_GUILD_NAME = "The Otis Parasocial (Social)"
+IJOINED_CHANNEL_NAME = "i-joined"
+IJOINED_REQUIRED_SUBSTRING = "i join"
+IJOINED_TIMEOUT_SECONDS = 3600  # 1 hour
+IJOINED_DM_TEXT = "You messed up #i-joined loser"
 pending_clashes: dict[int, dict] = {}
 clash_head_lookup: dict[int, int] = {}
 active_setup_sessions: dict[int, int] = {}
@@ -2583,6 +2595,40 @@ async def finalize_clash(clash_id: int):
 async def on_message(message):
     if message.author.bot:
         return
+
+    # =========================
+    # #i-joined GATEKEEPER (specific server/channel only)
+    # =========================
+    if (
+        message.guild
+        and message.guild.name == IJOINED_GUILD_NAME
+        and isinstance(message.channel, discord.TextChannel)
+        and message.channel.name == IJOINED_CHANNEL_NAME
+        and not message.author.guild_permissions.administrator
+    ):
+        if IJOINED_REQUIRED_SUBSTRING not in (message.content or "").lower():
+            # 1. Delete the offending message
+            try:
+                await message.delete()
+            except (discord.Forbidden, discord.NotFound):
+                pass
+            except Exception as e:
+                await log_error(message.guild, "i-joined gatekeeper: delete", e)
+            # 2. Time the author out for 1 hour
+            try:
+                await message.author.timeout(
+                    discord.utils.utcnow() + timedelta(seconds=IJOINED_TIMEOUT_SECONDS),
+                    reason="Posted in #i-joined without 'i join' in the message"
+                )
+            except (discord.Forbidden, discord.HTTPException) as e:
+                # Likely bot lacks perms or target outranks bot — log but continue
+                await log_error(message.guild, "i-joined gatekeeper: timeout", e)
+            # 3. DM the author. Silently swallow failure if their DMs are off.
+            try:
+                await message.author.send(IJOINED_DM_TEXT)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+            return
 
     author_roles = [role.name for role in message.author.roles]
     gid = message.guild.id

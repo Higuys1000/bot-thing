@@ -889,7 +889,7 @@ def get_active_vow(author_roles: list[str], guild_id: int | None = None, user_id
 
     Priority:
       1. Role-based vows (admin-assigned, can be multiple = CONFLICT)
-      2. User-self-assigned vow (via !vows create) — only used if no role-based vow
+      2. User-self-assigned vow (via !vows change) — only used if no role-based vow
 
     The (guild_id, user_id) args are optional; pass them to enable user-self-assigned vow lookup.
     """
@@ -1647,7 +1647,7 @@ def build_help_embed(guild_id: int) -> discord.Embed:
         value=(
             "`!help` — show this message\n"
             "`!vows` — show all Binding Vow descriptions + your status\n"
-            "`!vows create` — pick (or remove with `none`) your own binding vow\n"
+            "`!vows change` — pick (or remove with `none`) your own binding vow\n"
             "`!vows status` — check your current vow & change cooldown\n"
             "`!vows cooldown [hours]` — view/set vow-change cooldown *(mods only to set)*\n"
             "`!vote` — get the vote link for a 25% cooldown discount\n"
@@ -1669,8 +1669,8 @@ def build_binding_vows_embed() -> discord.Embed:
         title="⛩️ Binding Vows",
         description=(
             "Vows grant powerful effects but lock you into restrictions. "
-            "Use `!vows create` to pick one yourself, or have an admin assign you a vow role.\n"
-            "Type `!vows create` then `none` later to remove your vow."
+            "Use `!vows change` to pick one yourself, or have an admin assign you a vow role.\n"
+            "Type `!vows change` then `none` later to remove your vow."
         ),
         color=discord.Color.dark_red()
     )
@@ -1702,14 +1702,14 @@ def build_user_vow_status(member: discord.Member, guild_id: int) -> str:
     if remaining.total_seconds() > 0:
         lines.append(f"⏳ Next vow change available in **{str(remaining).split('.')[0]}** (cooldown: {cd_hours:g}h).")
     else:
-        lines.append(f"✅ You can change your vow now with `!vows create` (next change will lock for {cd_hours:g}h).")
+        lines.append(f"✅ You can change your vow now with `!vows change` (next change will lock for {cd_hours:g}h).")
 
     return "\n".join(lines)
 
 
-async def run_vow_create_session(ctx_or_interaction, guild: discord.Guild, user: discord.Member, channel):
+async def run_vow_change_session(ctx_or_interaction, guild: discord.Guild, user: discord.Member, channel):
     """Interactive vow picker. Anyone can use, with per-server cooldown."""
-    session_key = f"{user.id}:vowcreate"
+    session_key = f"{user.id}:vowchange"
     if session_key in active_setup_sessions:
         msg = "You already have an active vow picker session. Finish or cancel it first."
         if isinstance(ctx_or_interaction, discord.Interaction):
@@ -1813,7 +1813,7 @@ async def run_vow_create_session(ctx_or_interaction, guild: discord.Guild, user:
     if chosen is False:
         active_setup_sessions.pop(session_key, None)
         await channel.send(
-            f"❌ {user.mention}, `{msg.content.strip()}` isn't a valid choice. Run `!vows create` again to retry."
+            f"❌ {user.mention}, `{msg.content.strip()}` isn't a valid choice. Run `!vows change` again to retry."
         )
         return
 
@@ -1924,8 +1924,8 @@ async def prefix_vows(ctx, subcommand: str = None, *args):
 
     sub = subcommand.lower()
 
-    if sub == "create":
-        await run_vow_create_session(ctx, ctx.guild, ctx.author, ctx.channel)
+    if sub == "change":
+        await run_vow_change_session(ctx, ctx.guild, ctx.author, ctx.channel)
         return
 
     if sub == "cooldown":
@@ -1960,7 +1960,7 @@ async def prefix_vows(ctx, subcommand: str = None, *args):
     await ctx.send(
         f"Unknown subcommand `{subcommand}`. Try:\n"
         f"`!vows` — show all vows + your status\n"
-        f"`!vows create` — pick (or remove with `none`) your own binding vow\n"
+        f"`!vows change` — pick (or remove with `none`) your own binding vow\n"
         f"`!vows status` — check your current vow & cooldown\n"
         f"`!vows cooldown [hours]` — view or set vow-change cooldown *(mods only)*"
     )
@@ -2087,12 +2087,12 @@ async def slash_vows_list(interaction: discord.Interaction):
         await interaction.followup.send(build_user_vow_status(interaction.user, interaction.guild_id))
 
 
-@vows_group.command(name="create", description="Pick (or remove with 'none') your own binding vow")
-async def slash_vows_create(interaction: discord.Interaction):
+@vows_group.command(name="change", description="Pick (or remove with 'none') your own binding vow")
+async def slash_vows_change(interaction: discord.Interaction):
     if not interaction.guild:
         await interaction.response.send_message("Must be used in a server.", ephemeral=True)
         return
-    await run_vow_create_session(interaction, interaction.guild, interaction.user, interaction.channel)
+    await run_vow_change_session(interaction, interaction.guild, interaction.user, interaction.channel)
 
 
 @vows_group.command(name="status", description="Check your current binding vow and cooldown")

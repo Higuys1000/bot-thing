@@ -107,6 +107,8 @@ TARGET_GIFS = [
     "https://tenor.com/view/joe-timeout-family-guy-joe-quagmire-pushes-joe-gif-9289846603013112649",
     "https://tenor.com/view/nanami-jujutsu-kaisen-jysjd101-jujutsu-kaisen-season-2-jujutsu-kaisen-s2-anime-punching-gif-2229171179548596624",
     "https://gif.fxtwitter.com/tweet_video/HIOtbrXW0AAegwl.webp"
+
+"https://tenor.com/view/teru-mikami-death-note-delete-mikami-hand-of-god-gif-16331711636758846122",
 ]
 
 UNTIMEOUT_GIFS = [

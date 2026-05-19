@@ -842,7 +842,7 @@ BINDING_VOWS = {
     "Healing Vow": {
         "kill_multiplier": None,
         "save_multiplier": 0.002,
-        "description": "Cannot kill / Save CDs ÷500",
+        "description": "Cannot kill / Save CDs ÷500. Save window is **1×** your timeout (not 2×).",
     },
     "Hakari Vow": {
         "kill_multiplier": 1.0,
@@ -1635,7 +1635,8 @@ def build_help_embed(guild_id: int) -> discord.Embed:
             "If anyone replies to the kill GIF chain with another kill GIF within 5 seconds, a **Clash** happens — "
             "up to 10 fighters can join! The winner is decided by a weighted roll: each fighter's **power** stat "
             "(set per-role) is how many tickets they get in the lottery. More power = more likely to win, but never guaranteed. "
-            "Everyone except the winner gets timed out."
+            "Everyone except the winner gets timed out.\n\n"
+            "⚠️ **All vow effects are negated during clashes** — clashes use base timeout, no special vow outcomes."
         ),
         inline=False
     )
@@ -1665,7 +1666,10 @@ def build_help_embed(guild_id: int) -> discord.Embed:
             "`!vows` — show all Binding Vow descriptions + your status\n"
             "`!vows change` — pick (or remove with `none`) your own binding vow\n"
             "`!vows status` — check your current vow & change cooldown\n"
-            "`!vows cooldown [hours]` — view/set vow-change cooldown *(mods only to set)*\n"
+            "`!vows cooldown` — view server vow-change cooldown\n"
+            "`!vows cooldown @user` — view someone's current vow & cooldown\n"
+            "`!vows cooldown <hours>` — set server cooldown *(mods only)*\n"
+            "`!vows cooldown reset @user` — reset a user's vow-change cooldown *(mods only)*\n"
             "`!vote` — get the vote link for a 25% cooldown discount\n"
             "`!list [kill|save]` — browse this server's kill or save GIFs (anyone)\n"
             "`@bot` or `!cooldown [@user]` — check your (or someone else's) cooldown\n"
@@ -1686,7 +1690,8 @@ def build_binding_vows_embed() -> discord.Embed:
         description=(
             "Vows grant powerful effects but lock you into restrictions. "
             "Use `!vows change` to pick one yourself, or have an admin assign you a vow role.\n"
-            "Type `!vows change` then `none` later to remove your vow."
+            "Type `!vows change` then `none` later to remove your vow.\n\n"
+            "⚠️ **All vow effects are NEGATED during clashes.** Clashes use base timeout and base power only."
         ),
         color=discord.Color.dark_red()
     )
@@ -1945,15 +1950,45 @@ async def prefix_vows(ctx, subcommand: str = None, *args):
         return
 
     if sub == "cooldown":
-        if not is_mod(ctx.author):
-            await ctx.send(f"{ctx.author.mention}, you need Manage Roles permission to do that.")
-            return
-        if not args:
+        # Strip out any user mentions for clean text parsing
+        mentioned = ctx.message.mentions
+
+        # ---- Case 1: no args → show server cooldown (anyone) ----
+        if not args and not mentioned:
             current = get_vow_change_cooldown(ctx.guild.id)
             await ctx.send(
-                f"⛩️ Current vow-change cooldown: **{current:g}h**\n"
-                f"Set it with `!vows cooldown <hours>` — e.g. `!vows cooldown 48` for 2 days."
+                f"⛩️ This server's vow-change cooldown: **{current:g}h**\n"
+                f"• `!vows cooldown @user` — view someone's vow & their cooldown\n"
+                f"• `!vows cooldown <hours>` — set the server cooldown *(mods only)*\n"
+                f"• `!vows cooldown reset @user` — reset someone's vow-change cooldown *(mods only)*"
             )
+            return
+
+        # ---- Case 2: reset @user (mod only) ----
+        if args and args[0].lower() == "reset":
+            if not is_mod(ctx.author):
+                await ctx.send(f"{ctx.author.mention}, you need Manage Roles permission to do that.")
+                return
+            if not mentioned:
+                await ctx.send("Usage: `!vows cooldown reset @user`")
+                return
+            target = mentioned[0]
+            user_vow_last_changed.pop((ctx.guild.id, target.id), None)
+            save_cooldowns()
+            await ctx.send(f"✅ Reset vow-change cooldown for {target.mention}. They can change their vow now.")
+            return
+
+        # ---- Case 3: @user mentioned → show their vow + cooldown (anyone) ----
+        if mentioned:
+            target = mentioned[0]
+            if not isinstance(target, discord.Member):
+                target = ctx.guild.get_member(target.id) or target
+            await ctx.send(build_user_vow_status(target, ctx.guild.id))
+            return
+
+        # ---- Case 4: numeric arg → set server cooldown (mod only) ----
+        if not is_mod(ctx.author):
+            await ctx.send(f"{ctx.author.mention}, you need Manage Roles permission to set the server cooldown.")
             return
         try:
             hours = float(args[0])
@@ -1978,7 +2013,10 @@ async def prefix_vows(ctx, subcommand: str = None, *args):
         f"`!vows` — show all vows + your status\n"
         f"`!vows change` — pick (or remove with `none`) your own binding vow\n"
         f"`!vows status` — check your current vow & cooldown\n"
-        f"`!vows cooldown [hours]` — view or set vow-change cooldown *(mods only)*"
+        f"`!vows cooldown` — view server cooldown\n"
+        f"`!vows cooldown @user` — view someone's vow & cooldown\n"
+        f"`!vows cooldown <hours>` — set server cooldown *(mods only)*\n"
+        f"`!vows cooldown reset @user` — reset someone's cooldown *(mods only)*"
     )
 
 
@@ -2119,27 +2157,58 @@ async def slash_vows_status(interaction: discord.Interaction):
     await interaction.response.send_message(build_user_vow_status(interaction.user, interaction.guild_id))
 
 
-@vows_group.command(name="cooldown", description="View or set the vow-change cooldown for this server (mods only to set)")
-@app_commands.describe(hours="New cooldown in hours (omit to view current)")
-async def slash_vows_cooldown(interaction: discord.Interaction, hours: float = None):
-    if hours is None:
-        current = get_vow_change_cooldown(interaction.guild_id)
-        await interaction.response.send_message(
-            f"⛩️ Current vow-change cooldown: **{current:g}h**\n"
-            f"Mods can set it by passing the `hours` option."
-        )
+@vows_group.command(name="cooldown", description="View server cooldown, view a user's vow status, set it (mods), or reset a user (mods)")
+@app_commands.describe(
+    target="A user to view, or to reset if reset=True",
+    hours="New server cooldown in hours (mods only)",
+    reset="If True, reset the target user's vow-change cooldown (mods only — requires target)"
+)
+async def slash_vows_cooldown(interaction: discord.Interaction, target: discord.Member = None, hours: float = None, reset: bool = False):
+    if not interaction.guild:
+        await interaction.response.send_message("Must be used in a server.", ephemeral=True)
         return
-    if not is_mod(interaction.user):
-        await interaction.response.send_message("You need Manage Roles permission to change this.", ephemeral=True)
+
+    # ---- Reset target's cooldown (mod only) ----
+    if reset:
+        if not is_mod(interaction.user):
+            await interaction.response.send_message("You need Manage Roles permission to reset cooldowns.", ephemeral=True)
+            return
+        if not target:
+            await interaction.response.send_message("You need to pick a `target` user to reset.", ephemeral=True)
+            return
+        user_vow_last_changed.pop((interaction.guild_id, target.id), None)
+        save_cooldowns()
+        await interaction.response.send_message(f"✅ Reset vow-change cooldown for {target.mention}.")
         return
-    if hours < 0:
-        await interaction.response.send_message("Cooldown must be non-negative.", ephemeral=True)
+
+    # ---- Set server cooldown (mod only) ----
+    if hours is not None:
+        if not is_mod(interaction.user):
+            await interaction.response.send_message("You need Manage Roles permission to change this.", ephemeral=True)
+            return
+        if hours < 0:
+            await interaction.response.send_message("Cooldown must be non-negative.", ephemeral=True)
+            return
+        if interaction.guild_id not in server_settings:
+            server_settings[interaction.guild_id] = {}
+        server_settings[interaction.guild_id]["vow_change_cooldown_hours"] = hours
+        save_server_settings()
+        await interaction.response.send_message(f"✅ Vow-change cooldown set to **{hours:g}h** for this server.")
         return
-    if interaction.guild_id not in server_settings:
-        server_settings[interaction.guild_id] = {}
-    server_settings[interaction.guild_id]["vow_change_cooldown_hours"] = hours
-    save_server_settings()
-    await interaction.response.send_message(f"✅ Vow-change cooldown set to **{hours:g}h** for this server.")
+
+    # ---- View target user's vow & cooldown (anyone) ----
+    if target:
+        await interaction.response.send_message(build_user_vow_status(target, interaction.guild_id))
+        return
+
+    # ---- Default: view server cooldown (anyone) ----
+    current = get_vow_change_cooldown(interaction.guild_id)
+    await interaction.response.send_message(
+        f"⛩️ This server's vow-change cooldown: **{current:g}h**\n"
+        f"• Pass `target` to view someone's vow status\n"
+        f"• Pass `hours` to set the server cooldown *(mods only)*\n"
+        f"• Pass `target` + `reset=True` to reset their cooldown *(mods only)*"
+    )
 
 
 bot.tree.add_command(vows_group)
@@ -2370,8 +2439,6 @@ async def finalize_clash(clash_id: int):
             actual_duration = 30
         elif attacker_vow == "Random Vow":
             actual_duration = roll_random_vow_timeout()
-            set_random_vow_cd(guild_id, user_id, "kill")
-            save_cooldowns()
         else:
             actual_duration = timeout_duration
 
@@ -2403,17 +2470,17 @@ async def finalize_clash(clash_id: int):
                     await channel.send(f"{original_target.mention} has been timed out for {actual_duration}s by {attacker.mention}{vow_str} lmao")
             return
 
-        # 1v1 clash
+        # 1v1 clash — ALL VOW EFFECTS ARE NEGATED during clashes
         if len(participants) == 2:
             original_target = participants[1]
             attacker_roles = [r.name for r in attacker.roles]
             d_roles = [r.name for r in original_target.roles]
-            d_vow = get_active_vow(d_roles, guild_id, original_target.id)
             attacker_power = get_role_power(attacker_roles, guild_id)
             defender_power = get_role_power(d_roles, guild_id)
 
             all_roles_list = [attacker_roles, d_roles]
             await channel.send(pick_clash_gif(all_roles_list))
+            await channel.send("⚔️ **CLASH!** _(vows are negated)_")
             if any_gmm(all_roles_list):
                 await channel.send("can't clash with someone that strong buddy")
             await asyncio.sleep(3)
@@ -2425,49 +2492,16 @@ async def finalize_clash(clash_id: int):
             winner = attacker if attacker_wins else original_target
             loser = original_target if attacker_wins else attacker
 
-            if not attacker_wins and d_vow == "Miracle Vow":
-                actual_duration = 30
-            elif not attacker_wins and d_vow == "Random Vow":
-                actual_duration = roll_random_vow_timeout()
-                set_random_vow_cd(guild_id, original_target.id, "kill")
-                save_cooldowns()
-
-            if attacker_wins and attacker_vow == "Hakari Vow":
-                if random.random() < 0.50:
-                    if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=251), channel):
-                        await channel.send(HAKARI_JACKPOT_GIF)
-                        await channel.send(f"🎰 **JACKPOT! (clash)** {original_target.mention} muted 4m11s by {attacker.mention} [Hakari Vow]")
-                else:
-                    if await try_timeout(attacker, discord.utils.utcnow() + timedelta(seconds=90), channel):
-                        await channel.send(f"💀 {attacker.mention} [Hakari Vow] won but lost the gamble — muted 90s lmaooo")
-            elif not attacker_wins and d_vow == "Hakari Vow":
-                if random.random() < 0.50:
-                    if await try_timeout(attacker, discord.utils.utcnow() + timedelta(seconds=251), channel):
-                        await channel.send(HAKARI_JACKPOT_GIF)
-                        await channel.send(f"🎰 **JACKPOT! (clash)** {attacker.mention} muted 4m11s by {original_target.mention} [Hakari Vow]")
-                else:
-                    if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=90), channel):
-                        await channel.send(f"💀 {original_target.mention} [Hakari Vow] won but lost the gamble — muted 90s lmaooo")
-            else:
-                # Roll Black Flash for the winner (whoever's delivering the timeout)
-                winner_vow = attacker_vow if attacker_wins else d_vow
-                black_flash = roll_black_flash(winner_vow)
-                if black_flash:
-                    actual_duration = int(actual_duration * BLACK_FLASH_MULTIPLIER)
-                if await try_timeout(loser, discord.utils.utcnow() + timedelta(seconds=actual_duration), channel):
-                    if black_flash:
-                        await channel.send(
-                            f"⚡ **BLACK FLASH! (clash)** {winner.mention} [Black Flash Vow] landed it — "
-                            f"{loser.mention} timed out for **{actual_duration}s** (2×)!"
-                        )
-                    else:
-                        await channel.send(f"{winner.mention} WON\n{loser.mention} get timed out")
+            # Use base_timeout (pre-vow) so Destruction/Miracle/Random/Black Flash all no-op here
+            clash_duration = clash_data.get("base_timeout", clash_data["timeout_duration"])
+            if await try_timeout(loser, discord.utils.utcnow() + timedelta(seconds=clash_duration), channel):
+                await channel.send(f"{winner.mention} WON\n{loser.mention} get timed out for {clash_duration}s")
             return
 
-        # Multi-way clash (3-10)
+        # Multi-way clash (3-10) — ALL VOW EFFECTS ARE NEGATED
         all_roles_list = [[r.name for r in p.roles] for p in participants]
         await channel.send(pick_clash_gif(all_roles_list))
-        await channel.send(f"⚔️ **{len(participants)}-WAY CLASH!**")
+        await channel.send(f"⚔️ **{len(participants)}-WAY CLASH!** _(vows are negated)_")
         if any_gmm(all_roles_list):
             await channel.send("can't clash with someone that strong buddy")
         await asyncio.sleep(3)
@@ -2489,21 +2523,12 @@ async def finalize_clash(clash_id: int):
                 break
 
         losers = [p for p in participants if p.id != winner.id]
-        # Roll Black Flash for the winner
-        winner_roles = [r.name for r in winner.roles]
-        winner_vow = get_active_vow(winner_roles, guild_id, winner.id)
-        black_flash = roll_black_flash(winner_vow)
-        if black_flash:
-            actual_duration = int(actual_duration * BLACK_FLASH_MULTIPLIER)
-            await channel.send(
-                f"⚡ **BLACK FLASH!** {winner.mention} [Black Flash Vow] WON the {len(participants)}-way clash and landed it — "
-                f"everyone else timed out for **{actual_duration}s** (2×)!"
-            )
-        else:
-            await channel.send(f"🏆 {winner.mention} WON the {len(participants)}-way clash!")
+        # Use base_timeout (pre-vow) so Destruction/Miracle/Random/Black Flash all no-op
+        clash_duration = clash_data.get("base_timeout", clash_data["timeout_duration"])
+        await channel.send(f"🏆 {winner.mention} WON the {len(participants)}-way clash!")
         for loser in losers:
-            if await try_timeout(loser, discord.utils.utcnow() + timedelta(seconds=actual_duration), channel):
-                await channel.send(f"{loser.mention} gets timed out!")
+            if await try_timeout(loser, discord.utils.utcnow() + timedelta(seconds=clash_duration), channel):
+                await channel.send(f"{loser.mention} gets timed out for {clash_duration}s!")
 
     except asyncio.CancelledError:
         pass
@@ -2797,7 +2822,12 @@ async def on_message(message):
             return
 
         remaining = member_to_timeout.timed_out_until - discord.utils.utcnow()
-        saver_max_save = get_role_timeout(author_roles, gid) * 2
+        # Normally you can save anyone with up to 2x your timeout-power left.
+        # Healing Vow's tradeoff: you save constantly (CD ÷500), but your save window is 1x not 2x.
+        if vow == "Healing Vow":
+            saver_max_save = get_role_timeout(author_roles, gid)
+        else:
+            saver_max_save = get_role_timeout(author_roles, gid) * 2
         if remaining.total_seconds() <= saver_max_save:
             if await try_untimeout(member_to_timeout, message.channel):
                 if vow == "Random Vow":
@@ -2867,6 +2897,7 @@ async def on_message(message):
 
         if vow == "Random Vow":
             last_kill_used[(gid, uid)] = now
+            set_random_vow_cd(gid, uid, "kill")
             save_cooldowns()
         elif vow == "Miracle Vow":
             last_kill_used[(gid, uid)] = now
@@ -2907,6 +2938,7 @@ async def on_message(message):
             "head_message_id": message.id,
             "channel": message.channel,
             "timeout_duration": timeout_duration,
+            "base_timeout": base_timeout,
             "attacker_vow": attacker_vow,
             "vow_str": vow_str,
             "user_id": uid,

@@ -155,6 +155,10 @@ CLASH_GIFS = [
     "https://tenor.com/view/naoya-zenin-sorcerer-grade-special-1-vs-maki-zenin-gif-14997796067865413406",
     "https://tenor.com/view/dio-vs-jotaro-gif-18462062",
     "https://tenor.com/view/jujutsu-kaisen-yuta-ryu-okkotsu-fight-gif-10244605119238677045",
+
+"https://tenor.com/view/akaza-tanjiro-infinity-castle-demon-slayer-gif-8044902412848222591",
+
+"https://tenor.com/view/lime-gh-gif-3346971162530379223",
 ]
 
 CLASH_GIFS_GMM = [

@@ -208,6 +208,8 @@ DEFAULT_ROLE_POWER = {
 DEFAULT_TIMEOUT_SECONDS = 90
 
 GMM_ROLE = "Good Moderator Morning!"
+UNGUHABLE_ROLE = "UNGUHABLE"
+STACK_VOW_CHARGE_COOLDOWN_MINUTES = 5
 
 
 def get_role_cooldowns(guild_id: int) -> dict[str, float]:
@@ -336,6 +338,7 @@ miracle_gain_cooldown: dict[tuple[int, int], datetime] = {}
 ragebait_last_used: dict[tuple[int, int], datetime] = {}
 random_vow_cds: dict[tuple[int, int], dict[str, float | None]] = {}
 stack_vow_charges: dict[tuple[int, int], dict[str, list[datetime]]] = {}
+stack_vow_last_charge_used: dict[tuple[int, int], dict[str, datetime]] = {}
 user_assigned_vows: dict[tuple[int, int], str] = {}
 user_vow_last_changed: dict[tuple[int, int], datetime] = {}
 
@@ -366,6 +369,7 @@ def reset_user_all_cooldowns(user_id: int) -> int:
     _clear_dict_for_user(last_save_used)
     _clear_dict_for_user(miracle_gain_cooldown)
     _clear_dict_for_user(ragebait_last_used)
+    _clear_dict_for_user(stack_vow_last_charge_used)
 
     # Random Vow rolled CDs — null out both action slots
     for k in [k for k in random_vow_cds if k[1] == user_id]:
@@ -449,6 +453,11 @@ def load_cooldowns():
             "kill": [datetime.fromisoformat(t) for t in charges.get("kill", [])],
             "save": [datetime.fromisoformat(t) for t in charges.get("save", [])],
         }
+    for k, last_used in data.get("stack_vow_last_charge_used", {}).items():
+        stack_vow_last_charge_used[_parse_gk(k)] = {
+            "kill": datetime.fromisoformat(last_used.get("kill")) if last_used.get("kill") else None,
+            "save": datetime.fromisoformat(last_used.get("save")) if last_used.get("save") else None,
+        }
     for k, vow in data.get("user_assigned_vows", {}).items():
         user_assigned_vows[_parse_gk(k)] = vow
     for k, ts in data.get("user_vow_last_changed", {}).items():
@@ -459,6 +468,15 @@ def load_cooldowns():
 def save_cooldowns():
     def dt_gk(d):
         return {_gk(*k): v.isoformat() for k, v in d.items()}
+
+    def dt_dict_gk(d):
+        return {
+            _gk(*k): {
+                "kill": v.get("kill").isoformat() if v.get("kill") else None,
+                "save": v.get("save").isoformat() if v.get("save") else None,
+            }
+            for k, v in d.items()
+        }
 
     data = {
         "last_kill_used": dt_gk(last_kill_used),
@@ -475,6 +493,7 @@ def save_cooldowns():
             }
             for k, charges in stack_vow_charges.items()
         },
+        "stack_vow_last_charge_used": dt_dict_gk(stack_vow_last_charge_used),
         "user_assigned_vows": {_gk(*k): v for k, v in user_assigned_vows.items()},
         "user_vow_last_changed": {_gk(*k): v.isoformat() for k, v in user_vow_last_changed.items()},
     }
@@ -882,7 +901,7 @@ BINDING_VOWS = {
         "description": "Kill GIFs go through clash window. No clash: 36% mute target 4m11s / 64% mute yourself 90s. Win clash: 50/50 gamble.",
     },
     "Stack Vow": {
-        "description": "Kill & save CDs ×2, but bank up to 3 uses of each independently",
+        "description": "Kill & save CDs ×2, but bank up to 3 uses of each independently. 5-minute cooldown between each charge use.",
     },
     "Miracle Vow": {
         "kill_multiplier": 2.5,
@@ -992,10 +1011,31 @@ def stack_vow_available_charges(guild_id: int, user_id: int, action: str, cd_hou
     return max(0, STACK_VOW_MAX_CHARGES - len(active))
 
 
+def stack_vow_charge_cooldown_remaining(guild_id: int, user_id: int, action: str, now: datetime) -> timedelta | None:
+    """Returns cooldown remaining before next charge can be used, or None if ready."""
+    key = (guild_id, user_id)
+    last_used_dict = stack_vow_last_charge_used.get(key, {})
+    last_used = last_used_dict.get(action) if last_used_dict else None
+    
+    if not last_used:
+        return None
+    
+    cooldown = timedelta(minutes=STACK_VOW_CHARGE_COOLDOWN_MINUTES)
+    if now - last_used >= cooldown:
+        return None
+    
+    return cooldown - (now - last_used)
+
+
 def stack_vow_consume_charge(guild_id: int, user_id: int, action: str, now: datetime):
     key = (guild_id, user_id)
     user_data = stack_vow_charges.setdefault(key, {"kill": [], "save": []})
     user_data[action].append(now)
+    
+    # Track last charge use for cooldown
+    if key not in stack_vow_last_charge_used:
+        stack_vow_last_charge_used[key] = {"kill": None, "save": None}
+    stack_vow_last_charge_used[key][action] = now
 
 
 def stack_vow_next_regen(guild_id: int, user_id: int, action: str, cd_hours: float, now: datetime) -> timedelta | None:
@@ -1537,7 +1577,10 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
         def charge_status(action: str) -> str:
             available = stack_vow_available_charges(gid, uid, action, sv_cd, now)
             next_regen = stack_vow_next_regen(gid, uid, action, sv_cd, now)
+            charge_cd = stack_vow_charge_cooldown_remaining(gid, uid, action, now)
             charge_pips = "🟢" * available + "🔴" * (STACK_VOW_MAX_CHARGES - available)
+            if charge_cd:
+                return f"{charge_pips} (charge CD: **{str(charge_cd).split('.')[0]}**)"
             if next_regen:
                 return f"{charge_pips} (next regen in **{str(next_regen).split('.')[0]}**)"
             return charge_pips
@@ -1900,6 +1943,7 @@ async def run_vow_change_session(ctx_or_interaction, guild: discord.Guild, user:
         random_vow_cds[(gid, uid)] = {"kill": None, "save": None}
     if (gid, uid) in stack_vow_charges:
         stack_vow_charges[(gid, uid)] = {"kill": [], "save": []}
+    stack_vow_last_charge_used.pop((gid, uid), None)
     miracle_counts.pop((gid, uid), None)
     save_cooldowns()
 
@@ -2662,6 +2706,15 @@ async def on_message(message):
     is_save_gif = any(gif in content for gif in get_save_gifs(gid))
 
     # =========================
+    # UNGUHABLE ROLE CHECK
+    # =========================
+    if (is_kill_gif or is_save_gif) and UNGUHABLE_ROLE in author_roles:
+        action = "use kill GIFs" if is_kill_gif else "use save GIFs"
+        await message.channel.send(f"{message.author.mention}, you have the **{UNGUHABLE_ROLE}** role and can't {action}.")
+        await bot.process_commands(message)
+        return
+
+    # =========================
     # CLASH JOIN CHECK
     # =========================
     if is_kill_gif and message.reference.message_id in clash_head_lookup:
@@ -2778,6 +2831,15 @@ async def on_message(message):
     if vow == "Stack Vow":
         sv_cd = apply_vote_discount(base_cd * STACK_VOW_MULTIPLIER, uid)
         available = stack_vow_available_charges(gid, uid, action, sv_cd, now)
+        
+        # Check charge cooldown before checking availability
+        charge_cd = stack_vow_charge_cooldown_remaining(gid, uid, action, now)
+        if charge_cd:
+            await message.channel.send(
+                f"{message.author.mention}, [Stack Vow] {action} charge on cooldown: **{str(charge_cd).split('.')[0]}**{vote_note(uid)}"
+            )
+            return
+        
         if available == 0:
             next_regen = stack_vow_next_regen(gid, uid, action, sv_cd, now)
             await message.channel.send(

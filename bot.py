@@ -1754,6 +1754,7 @@ def build_help_embed(guild_id: int) -> discord.Embed:
             "`!vows cooldown <hours>` — set server cooldown *(mods only)*\n"
             "`!vows cooldown reset @user` — reset a user's vow-change cooldown *(mods only)*\n"
             "`!vote` — get the vote link (voting resets your cooldowns)\n"
+            "`!patreon` — support the bot on Patreon\n"
             "`!list [kill|save]` — browse this server's kill or save GIFs (anyone)\n"
             "`@bot` or `!cooldown [@user]` — check your (or someone else's) cooldown\n"
             "`!resetcooldown @user [kill|save|both]` — reset a cooldown *(mods only)*\n"
@@ -2447,6 +2448,34 @@ async def prefix_vote(ctx):
 @bot.tree.command(name="vote", description="Get the vote link — voting resets all your cooldowns")
 async def slash_vote(interaction: discord.Interaction):
     await interaction.response.send_message(embed=build_vote_embed(interaction.user.id))
+
+
+@bot.command(name="patreon")
+async def prefix_patreon(ctx):
+    patreon_embed = discord.Embed(
+        title="💖 Support the bot on Patreon!",
+        description=(
+            "Help keep the bot running and get early access to new features!\n\n"
+            "[💖 Join the Patreon](https://www.patreon.com/cw/guhbot)"
+        ),
+        color=discord.Color.red(),
+        url="https://www.patreon.com/cw/guhbot"
+    )
+    await ctx.send(embed=patreon_embed)
+
+
+@bot.tree.command(name="patreon", description="Support the bot on Patreon")
+async def slash_patreon(interaction: discord.Interaction):
+    patreon_embed = discord.Embed(
+        title="💖 Support the bot on Patreon!",
+        description=(
+            "Help keep the bot running and get early access to new features!\n\n"
+            "[💖 Join the Patreon](https://www.patreon.com/cw/guhbot)"
+        ),
+        color=discord.Color.red(),
+        url="https://www.patreon.com/cw/guhbot"
+    )
+    await interaction.response.send_message(embed=patreon_embed)
 
 
 # =========================

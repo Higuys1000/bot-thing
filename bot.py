@@ -504,6 +504,67 @@ def save_cooldowns():
 
 
 # =========================
+# GLOBAL GIF MANAGERS
+# =========================
+
+MASTER_ADMIN_USERNAME = "higuys_"
+authorized_gif_managers: set[str] = set()
+
+def load_gif_managers():
+    global authorized_gif_managers
+    try:
+        raw = redis.get("authorized_gif_managers")
+        if raw:
+            data = json.loads(raw)
+            authorized_gif_managers = set(data)
+            print(f"[gif_managers] Loaded {len(authorized_gif_managers)} authorized managers")
+    except Exception as e:
+        print(f"[gif_managers] Redis load failed: {e}")
+
+def save_gif_managers():
+    try:
+        redis.set("authorized_gif_managers", json.dumps(list(authorized_gif_managers)))
+    except Exception as e:
+        print(f"[gif_managers] Redis save failed: {e}")
+
+def get_global_kill_gifs() -> list[str]:
+    """Return global kill GIF list."""
+    try:
+        raw = redis.get("global:kill_gifs")
+        if raw:
+            data = json.loads(raw)
+            if data:
+                return data
+    except Exception as e:
+        print(f"[global_gifs] Redis get kill gifs failed: {e}")
+    return TARGET_GIFS
+
+def get_global_save_gifs() -> list[str]:
+    """Return global save GIF list."""
+    try:
+        raw = redis.get("global:save_gifs")
+        if raw:
+            data = json.loads(raw)
+            if data:
+                return data
+    except Exception as e:
+        print(f"[global_gifs] Redis get save gifs failed: {e}")
+    return UNTIMEOUT_GIFS
+
+def save_global_kill_gifs(gifs: list[str]):
+    try:
+        redis.set("global:kill_gifs", json.dumps(gifs))
+    except Exception as e:
+        print(f"[global_gifs] Redis save kill gifs failed: {e}")
+
+def save_global_save_gifs(gifs: list[str]):
+    try:
+        redis.set("global:save_gifs", json.dumps(gifs))
+    except Exception as e:
+        print(f"[global_gifs] Redis save save gifs failed: {e}")
+
+
+# =========================
 # PER-SERVER GIF LISTS
 # =========================
 
@@ -1973,6 +2034,7 @@ async def on_ready():
     global server_settings
     server_settings = load_server_settings()
     load_cooldowns()
+    load_gif_managers()
     print(f"Logged in as {bot.user}")
 
     for guild in bot.guilds:
@@ -2205,6 +2267,74 @@ async def prefix_resetcooldown(ctx, target: discord.Member = None, which: str = 
     save_cooldowns()
     label = "kill and save cooldowns" if which == "both" else f"{which} cooldown"
     await ctx.send(f"✅ Reset {label} for {target.mention}.")
+
+
+# =========================
+# GLOBAL GIF MANAGER COMMANDS
+# =========================
+
+@bot.command(name="add")
+async def prefix_add(ctx, action: str = None, *args):
+    """
+    !add <username> — add a username to authorized gif managers (higuys_ only)
+    !add killgif <url> — add a global kill gif (authorized users only)
+    !add savegif <url> — add a global save gif (authorized users only)
+    """
+    if action is None:
+        await ctx.send(
+            "**Usage:**\n"
+            "`!add <username>` — add an authorized gif manager *(higuys_ only)*\n"
+            "`!add killgif <url>` — add a global kill gif *(authorized users only)*\n"
+            "`!add savegif <url>` — add a global save gif *(authorized users only)*"
+        )
+        return
+
+    action_lower = action.lower()
+
+    # ---- Add username to authorized managers (higuys_ only) ----
+    if action_lower not in ("killgif", "savegif"):
+        if ctx.author.name != MASTER_ADMIN_USERNAME:
+            await ctx.send(f"{ctx.author.mention}, only **{MASTER_ADMIN_USERNAME}** can add authorized gif managers.")
+            return
+        username_to_add = action
+        if username_to_add in authorized_gif_managers:
+            await ctx.send(f"⚠️ **{username_to_add}** is already an authorized gif manager.")
+            return
+        authorized_gif_managers.add(username_to_add)
+        save_gif_managers()
+        await ctx.send(f"✅ Added **{username_to_add}** as an authorized gif manager.")
+        return
+
+    # ---- Add global kill/save gif (authorized users only) ----
+    if ctx.author.name not in authorized_gif_managers:
+        await ctx.send(f"{ctx.author.mention}, you're not authorized to add global GIFs.")
+        return
+
+    if not args:
+        await ctx.send(f"Usage: `!add {action_lower} <url>`")
+        return
+
+    url = args[0]
+    if not (url.startswith("http://") or url.startswith("https://")):
+        await ctx.send("⚠️ That doesn't look like a valid URL.")
+        return
+
+    if action_lower == "killgif":
+        current = get_global_kill_gifs()
+        if url in current:
+            await ctx.send("⚠️ That GIF is already in the global kill list.")
+            return
+        current.append(url)
+        save_global_kill_gifs(current)
+        await ctx.send(f"✅ Added global kill GIF! ({len(current)} total)")
+    elif action_lower == "savegif":
+        current = get_global_save_gifs()
+        if url in current:
+            await ctx.send("⚠️ That GIF is already in the global save list.")
+            return
+        current.append(url)
+        save_global_save_gifs(current)
+        await ctx.send(f"✅ Added global save GIF! ({len(current)} total)")
 
 
 # =========================

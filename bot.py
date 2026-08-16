@@ -974,11 +974,6 @@ BINDING_VOWS = {
         "save_multiplier": 1.0,
         "description": "After each kill, timeout duration is random and kill CD is randomized 1-21h. Save CD randomized 2-10h independently.",
     },
-    "Guh Opt Out": {
-        "kill_multiplier": None,
-        "save_multiplier": None,
-        "description": "Opt out of guhs entirely. You can't kill, save, or be timed out by anyone.",
-    },
     "Ragebait Vow": {
         "kill_multiplier": 1.0,
         "save_multiplier": 1.0,
@@ -1035,11 +1030,9 @@ def get_active_vow(author_roles: list[str], guild_id: int | None = None, user_id
 
 
 def apply_vow(base_cooldown_hours: float, action: str, vow_name: str | None) -> float:
-    if not vow_name or vow_name in ("CONFLICT", "Stack Vow", "Random Vow", "Miracle Vow", "Guh Opt Out") or vow_name not in BINDING_VOWS:
+    if not vow_name or vow_name in ("CONFLICT", "Stack Vow", "Random Vow", "Miracle Vow") or vow_name not in BINDING_VOWS:
         if vow_name == "Miracle Vow":
             return max(0.0, base_cooldown_hours * 2.5)
-        if vow_name == "Guh Opt Out":
-            return -1.0
         return max(0.0, base_cooldown_hours)
     vow = BINDING_VOWS[vow_name]
     multiplier = vow["kill_multiplier"] if action == "kill" else vow["save_multiplier"]
@@ -1708,9 +1701,6 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
             f"💚 Save CD: {format_random_cd(save_cd_val, last_save)}{note}"
         )
 
-    if vow == "Guh Opt Out":
-        return f"{member.mention}, you've opted out of Guh — no cooldowns apply, you can't be timed out."
-
     if vow == "Ragebait Vow":
         save_cd = apply_vote_discount(base_cd, uid)
         last_save = last_save_used.get((gid, uid))
@@ -1798,7 +1788,8 @@ def build_help_embed(guild_id: int) -> discord.Embed:
     embed.add_field(
         name="📥 Vote to reset your cooldowns",
         value=(
-            "Vote for the bot to **instantly reset all your cooldowns** across every server.\n"
+            "Vote for the bot on Discord Bot List to **instantly reset all your cooldowns** "
+            "(kill, save, miracle gain, ragebait, random/stack vow CDs) across every server.\n"
             "[Click here to vote](https://discordbotlist.com/bots/funnything/upvote)"
         ),
         inline=False
@@ -2968,142 +2959,6 @@ async def on_message(message):
         vow = None
 
     # =========================
-    # GUH OPT OUT
-    # =========================
-    if is_kill_gif:
-        defender_roles = [r.name for r in member_to_timeout.roles]
-        defender_vow = get_active_vow(defender_roles, gid, member_to_timeout.id)
-        if defender_vow == "Guh Opt Out":
-            await message.channel.send(f"{member_to_timeout.mention} has opted out of Guh and can't be timed out.")
-            return
-
-    if vow == "Guh Opt Out":
-        if action == "kill":
-            await message.channel.send(f"{message.author.mention}, you've opted out of Guh — you can't time anyone out.")
-        else:
-            await message.channel.send(f"{message.author.mention}, you've opted out of Guh — you can't save anyone either.")
-        return
-
-    # =========================
-    # STACK VOW
-    # =========================
-    if vow == "Stack Vow":
-        sv_cd = apply_vote_discount(base_cd * STACK_VOW_MULTIPLIER, uid)
-        available = stack_vow_available_charges(gid, uid, action, sv_cd, now)
-        
-        # Check charge cooldown before checking availability
-        charge_cd = stack_vow_charge_cooldown_remaining(gid, uid, action, now)
-        if charge_cd:
-            await message.channel.send(
-                f"{message.author.mention}, [Stack Vow] {action} charge on cooldown: **{str(charge_cd).split('.')[0]}**{vote_note(uid)}"
-            )
-            return
-        
-        if available == 0:
-            next_regen = stack_vow_next_regen(gid, uid, action, sv_cd, now)
-            await message.channel.send(
-                f"{message.author.mention}, [Stack Vow] no {action} charges left — next charge in **{str(next_regen).split('.')[0]}**{vote_note(uid)}"
-            )
-            return
-        stack_vow_consume_charge(gid, uid, action, now)
-        remaining_after = available - 1
-        vow_str = f" [Stack Vow | {remaining_after}/{STACK_VOW_MAX_CHARGES} {action} charges left]"
-
-    # =========================
-    # RANDOM VOW
-    # =========================
-    elif vow == "Random Vow":
-        rv_cd_raw = get_random_vow_cd(gid, uid, action)
-        rv_cd = apply_vote_discount(rv_cd_raw, uid) if rv_cd_raw is not None else None
-        last = last_kill_used.get((gid, uid)) if action == "kill" else last_save_used.get((gid, uid))
-        if rv_cd is not None and last is not None and now - last < timedelta(hours=rv_cd):
-            remaining = timedelta(hours=rv_cd) - (now - last)
-            await message.channel.send(
-                f"{message.author.mention}, [Random Vow] cooldown remaining: **{str(remaining).split('.')[0]}** (rolled {rv_cd_raw:.2f}h)"
-            )
-            return
-        vow_str = f" [Random Vow]"
-
-    # =========================
-    # MIRACLE VOW
-    # =========================
-    elif vow == "Miracle Vow":
-        miracle_cd = apply_vote_discount(base_cd * 2.5, uid)
-        last = last_kill_used.get((gid, uid)) if action == "kill" else last_save_used.get((gid, uid))
-        if last and now - last < timedelta(hours=miracle_cd):
-            remaining = timedelta(hours=miracle_cd) - (now - last)
-            await message.channel.send(
-                f"{message.author.mention}, [Miracle Vow] cooldown remaining: **{str(remaining).split('.')[0]}**{vote_note(uid)}"
-            )
-            return
-        vow_str = f" [Miracle Vow]"
-
-    # =========================
-    # RAGEBAIT VOW
-    # =========================
-    elif vow == "Ragebait Vow":
-        if action == "save":
-            save_cd = apply_vote_discount(base_cd, uid)
-            last = last_save_used.get((gid, uid))
-            if last and now - last < timedelta(hours=save_cd):
-                remaining = timedelta(hours=save_cd) - (now - last)
-                await message.channel.send(
-                    f"{message.author.mention}, [Ragebait Vow] save cooldown remaining: **{str(remaining).split('.')[0]}**{vote_note(uid)}"
-                )
-                return
-        vow_str = f" [Ragebait Vow]"
-
-    # =========================
-    # STANDARD VOW
-    # =========================
-    else:
-        effective_cd = apply_vote_discount(apply_vow(base_cd, action, vow), uid)
-        vow_str = format_vow_label(vow)
-
-        if effective_cd == -1.0:
-            await message.channel.send(f"{message.author.mention}, your {vow} forbids you from this action. 🪹")
-            return
-
-        last = last_kill_used.get((gid, uid)) if action == "kill" else last_save_used.get((gid, uid))
-
-        if effective_cd > 0 and last:
-            if now - last < timedelta(hours=effective_cd):
-                remaining = timedelta(hours=effective_cd) - (now - last)
-
-                if is_kill_gif:
-                    target_roles = [r.name for r in member_to_timeout.roles]
-                    target_vow = get_active_vow(target_roles, gid, member_to_timeout.id)
-                    if target_vow == "Miracle Vow":
-                        if not can_gain_miracle_from_failed_timeout(gid, member_to_timeout.id):
-                            await message.channel.send(
-                                f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: {str(remaining).split('.')[0]}{vote_note(uid)}"
-                            )
-                            return
-                        new_count = add_miracle(gid, member_to_timeout.id)
-                        record_miracle_gain_from_failed_timeout(gid, member_to_timeout.id)
-                        save_cooldowns()
-                        if new_count == -1:
-                            await message.channel.send(
-                                f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: {str(remaining).split('.')[0]}\n"
-                                f"{member_to_timeout.mention} is already at max miracles ({MIRACLE_MAX}/{MIRACLE_MAX})!{vote_note(uid)}"
-                            )
-                        else:
-                            await message.channel.send(
-                                f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: {str(remaining).split('.')[0]}\n"
-                                f"✨ {member_to_timeout.mention} got a miracle! They now have **{new_count}/{MIRACLE_MAX}** miracles.{vote_note(uid)}"
-                            )
-                        return
-
-                await message.channel.send(
-                    f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: {str(remaining).split('.')[0]}{vote_note(uid)}"
-                )
-                return
-
-        if action == "kill":
-            last_kill_used[(gid, uid)] = now
-            save_cooldowns()
-
-    # =========================
     # SAVE GIF
     # =========================
     if is_save_gif:
@@ -3173,7 +3028,58 @@ async def on_message(message):
     # KILL GIF
     # =========================
     if is_kill_gif:
-        if vow == "Ragebait Vow":
+        vow_str = format_vow_label(vow)
+
+        # Stack Vow
+        if vow == "Stack Vow":
+            sv_cd = apply_vote_discount(base_cd * STACK_VOW_MULTIPLIER, uid)
+            available = stack_vow_available_charges(gid, uid, action, sv_cd, now)
+            
+            # Check charge cooldown before checking availability
+            charge_cd = stack_vow_charge_cooldown_remaining(gid, uid, action, now)
+            if charge_cd:
+                await message.channel.send(
+                    f"{message.author.mention}, [Stack Vow] {action} charge on cooldown: **{str(charge_cd).split('.')[0]}**{vote_note(uid)}"
+                )
+                return
+            
+            if available == 0:
+                next_regen = stack_vow_next_regen(gid, uid, action, sv_cd, now)
+                await message.channel.send(
+                    f"{message.author.mention}, [Stack Vow] no {action} charges left — next charge in **{str(next_regen).split('.')[0]}**{vote_note(uid)}"
+                )
+                return
+            stack_vow_consume_charge(gid, uid, action, now)
+            remaining_after = available - 1
+            vow_str = f" [Stack Vow | {remaining_after}/{STACK_VOW_MAX_CHARGES} {action} charges left]"
+
+        # Random Vow
+        elif vow == "Random Vow":
+            rv_cd_raw = get_random_vow_cd(gid, uid, action)
+            rv_cd = apply_vote_discount(rv_cd_raw, uid) if rv_cd_raw is not None else None
+            last = last_kill_used.get((gid, uid)) if action == "kill" else last_save_used.get((gid, uid))
+            if rv_cd is not None and last is not None and now - last < timedelta(hours=rv_cd):
+                remaining = timedelta(hours=rv_cd) - (now - last)
+                await message.channel.send(
+                    f"{message.author.mention}, [Random Vow] cooldown remaining: **{str(remaining).split('.')[0]}** (rolled {rv_cd_raw:.2f}h)"
+                )
+                return
+            vow_str = f" [Random Vow]"
+
+        # Miracle Vow
+        elif vow == "Miracle Vow":
+            miracle_cd = apply_vote_discount(base_cd * 2.5, uid)
+            last = last_kill_used.get((gid, uid)) if action == "kill" else last_save_used.get((gid, uid))
+            if last and now - last < timedelta(hours=miracle_cd):
+                remaining = timedelta(hours=miracle_cd) - (now - last)
+                await message.channel.send(
+                    f"{message.author.mention}, [Miracle Vow] cooldown remaining: **{str(remaining).split('.')[0]}**{vote_note(uid)}"
+                )
+                return
+            vow_str = f" [Miracle Vow]"
+
+        # Ragebait Vow
+        elif vow == "Ragebait Vow":
             if is_ragebait_on_cd(gid, uid, now):
                 remaining = get_ragebait_remaining(gid, uid, now)
                 await message.channel.send(
@@ -3188,6 +3094,53 @@ async def on_message(message):
             )
             await bot.process_commands(message)
             return
+
+        # Standard vows (Destruction, Healing, Hakari, Black Flash, or no vow)
+        else:
+            effective_cd = apply_vote_discount(apply_vow(base_cd, action, vow), uid)
+
+            if effective_cd == -1.0:
+                await message.channel.send(f"{message.author.mention}, your {vow} forbids you from this action. 🪹")
+                return
+
+            last = last_kill_used.get((gid, uid)) if action == "kill" else last_save_used.get((gid, uid))
+
+            if effective_cd > 0 and last:
+                if now - last < timedelta(hours=effective_cd):
+                    remaining = timedelta(hours=effective_cd) - (now - last)
+
+                    if is_kill_gif:
+                        target_roles = [r.name for r in member_to_timeout.roles]
+                        target_vow = get_active_vow(target_roles, gid, member_to_timeout.id)
+                        if target_vow == "Miracle Vow":
+                            if not can_gain_miracle_from_failed_timeout(gid, member_to_timeout.id):
+                                await message.channel.send(
+                                    f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: {str(remaining).split('.')[0]}{vote_note(uid)}"
+                                )
+                                return
+                            new_count = add_miracle(gid, member_to_timeout.id)
+                            record_miracle_gain_from_failed_timeout(gid, member_to_timeout.id)
+                            save_cooldowns()
+                            if new_count == -1:
+                                await message.channel.send(
+                                    f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: {str(remaining).split('.')[0]}\n"
+                                    f"{member_to_timeout.mention} is already at max miracles ({MIRACLE_MAX}/{MIRACLE_MAX})!{vote_note(uid)}"
+                                )
+                            else:
+                                await message.channel.send(
+                                    f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: {str(remaining).split('.')[0]}\n"
+                                    f"✨ {member_to_timeout.mention} got a miracle! They now have **{new_count}/{MIRACLE_MAX}** miracles.{vote_note(uid)}"
+                                )
+                            return
+
+                    await message.channel.send(
+                        f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: {str(remaining).split('.')[0]}{vote_note(uid)}"
+                    )
+                    return
+
+            if action == "kill":
+                last_kill_used[(gid, uid)] = now
+                save_cooldowns()
 
         base_timeout = get_role_timeout(author_roles, gid)
         timeout_duration = base_timeout * 3 if vow == "Destruction Vow" else base_timeout

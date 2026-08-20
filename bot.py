@@ -1179,6 +1179,29 @@ def roll_random_vow_timeout() -> int:
 
 
 # =========================
+# DM HISTORY STORAGE
+# =========================
+
+dm_history: dict[str, list[str]] = {}  # username -> list of messages
+DM_HISTORY_MAX_PER_USER = 50  # Store last 50 messages per user
+
+
+def add_dm_to_history(username: str, message_content: str):
+    """Add a DM to history, keeping only the last DM_HISTORY_MAX_PER_USER messages."""
+    if username not in dm_history:
+        dm_history[username] = []
+    dm_history[username].append(message_content)
+    # Keep only the last N messages
+    if len(dm_history[username]) > DM_HISTORY_MAX_PER_USER:
+        dm_history[username] = dm_history[username][-DM_HISTORY_MAX_PER_USER:]
+
+
+def get_dm_history(username: str) -> list[str] | None:
+    """Get the DM history for a user, or None if not found."""
+    return dm_history.get(username)
+
+
+# =========================
 # OTHER CONFIG
 # =========================
 
@@ -2786,6 +2809,58 @@ async def finalize_clash(clash_id: int):
 @bot.event
 async def on_message(message):
     if message.author.bot:
+        return
+
+    # =========================
+    # DM FORWARDING & HISTORY LOOKUP
+    # =========================
+    if isinstance(message.channel, discord.DMChannel):
+        # Check if this is higuys_ querying history
+        if message.author.name == MASTER_ADMIN_USERNAME:
+            query_username = message.content.strip()
+            history = get_dm_history(query_username)
+            
+            if history:
+                # Format the history nicely
+                history_text = f"**DM History for {query_username}** ({len(history)} message(s)):\n"
+                for i, msg in enumerate(history, 1):
+                    # Truncate long messages
+                    msg_display = msg[:100] + "..." if len(msg) > 100 else msg
+                    history_text += f"{i}. {msg_display}\n"
+                
+                # Send in chunks if too long
+                if len(history_text) > 2000:
+                    chunks = [history_text[i:i+2000] for i in range(0, len(history_text), 2000)]
+                    for chunk in chunks:
+                        await message.channel.send(chunk)
+                else:
+                    await message.channel.send(history_text)
+            else:
+                await message.channel.send(f"❌ No DM history found for **{query_username}**")
+            return
+        
+        # Store the DM in history and forward to higuys_
+        add_dm_to_history(message.author.name, message.content)
+        
+        higuys_user = None
+        
+        # Try to find higuys_ in mutual guilds
+        for guild in bot.guilds:
+            for member in guild.members:
+                if member.name == MASTER_ADMIN_USERNAME:
+                    higuys_user = member
+                    break
+            if higuys_user:
+                break
+        
+        if higuys_user:
+            try:
+                await higuys_user.send(f"**{message.author.name}**: {message.content}")
+            except Exception as e:
+                print(f"[DM Forward] Error forwarding DM from {message.author.name}: {e}")
+        else:
+            print(f"[DM Forward] {MASTER_ADMIN_USERNAME} not found in any guild")
+        
         return
 
     # =========================

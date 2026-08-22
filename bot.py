@@ -2088,7 +2088,7 @@ async def sync_commands(ctx):
 # =========================
 
 def is_mod(member: discord.Member) -> bool:
-    return member.guild_permissions.administrator
+    return member.guild_permissions.ban_members
 
 
 @bot.command(name="help")

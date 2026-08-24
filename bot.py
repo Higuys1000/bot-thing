@@ -2929,6 +2929,11 @@ async def on_message(message):
     content = message.content
     is_kill_gif = any(gif in content for gif in get_kill_gifs(gid))
     is_save_gif = any(gif in content for gif in get_save_gifs(gid))
+    
+    # =========================
+    # DSCEIT SPECIAL GIF (auto-targets dsceit)
+    # =========================
+    is_dsceit_gif = "1541239747815673886" in content  # The togif.gif attachment ID from the specific URL
 
     # =========================
     # UNGUHABLE ROLE CHECK
@@ -2980,20 +2985,40 @@ async def on_message(message):
         await bot.process_commands(message)
         return
 
-    if not (is_kill_gif or is_save_gif):
+    # =========================
+    # DSCEIT GIF SPECIAL HANDLING
+    # =========================
+    if is_dsceit_gif:
+        # Find dsceit in the guild
+        dsceit_member = None
+        for member in message.guild.members:
+            if member.name == "dsceit":
+                dsceit_member = member
+                break
+        
+        if not dsceit_member:
+            await message.channel.send("❌ dsceit not found in this server")
+            await bot.process_commands(message)
+            return
+        
+        # Treat dsceit as the target for timeout — always a kill
+        is_kill_gif = True
+        is_save_gif = False
+        member_to_timeout = dsceit_member
+    elif not (is_kill_gif or is_save_gif):
         await bot.process_commands(message)
         return
+    else:
+        try:
+            replied_message = await message.channel.fetch_message(message.reference.message_id)
+        except Exception as e:
+            await log_error(message.guild, "on_message: fetch replied message", e)
+            await bot.process_commands(message)
+            return
 
-    try:
-        replied_message = await message.channel.fetch_message(message.reference.message_id)
-    except Exception as e:
-        await log_error(message.guild, "on_message: fetch replied message", e)
-        await bot.process_commands(message)
-        return
-
-    member_to_timeout = message.guild.get_member(replied_message.author.id)
-    if not member_to_timeout:
-        return
+        member_to_timeout = message.guild.get_member(replied_message.author.id)
+        if not member_to_timeout:
+            return
 
     role_cooldowns = get_role_cooldowns(gid)
     valid_roles = [r for r in author_roles if r in role_cooldowns]

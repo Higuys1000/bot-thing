@@ -462,6 +462,8 @@ def load_cooldowns():
         user_assigned_vows[_parse_gk(k)] = vow
     for k, ts in data.get("user_vow_last_changed", {}).items():
         user_vow_last_changed[_parse_gk(k)] = datetime.fromisoformat(ts)
+    for k, ts in data.get("healing_vow_auto_save_cooldown", {}).items():
+        healing_vow_auto_save_cooldown[_parse_gk(k)] = datetime.fromisoformat(ts)
     print(f"[cooldowns] Loaded {len(data.get('last_kill_used', {}))} kill CD entries.")
 
 
@@ -496,6 +498,7 @@ def save_cooldowns():
         "stack_vow_last_charge_used": dt_dict_gk(stack_vow_last_charge_used),
         "user_assigned_vows": {_gk(*k): v for k, v in user_assigned_vows.items()},
         "user_vow_last_changed": {_gk(*k): v.isoformat() for k, v in user_vow_last_changed.items()},
+        "healing_vow_auto_save_cooldown": dt_gk(healing_vow_auto_save_cooldown),
     }
     try:
         redis.set("cooldowns", json.dumps(data))
@@ -2286,6 +2289,7 @@ async def prefix_resetcooldown(ctx, target: discord.Member = None, which: str = 
             random_vow_cds[(gid, uid)]["save"] = None
         if (gid, uid) in stack_vow_charges:
             stack_vow_charges[(gid, uid)]["save"] = []
+        healing_vow_auto_save_cooldown.pop((gid, uid), None)
     save_cooldowns()
     label = "kill and save cooldowns" if which == "both" else f"{which} cooldown"
     await ctx.send(f"✅ Reset {label} for {target.mention}.")
@@ -2489,6 +2493,7 @@ async def slash_resetcooldown(interaction: discord.Interaction, target: discord.
             random_vow_cds[(gid, uid)]["save"] = None
         if (gid, uid) in stack_vow_charges:
             stack_vow_charges[(gid, uid)]["save"] = []
+        healing_vow_auto_save_cooldown.pop((gid, uid), None)
     save_cooldowns()
     label = "kill and save cooldowns" if which == "both" else f"{which} cooldown"
     await interaction.response.send_message(f"✅ Reset {label} for {target.mention}.")

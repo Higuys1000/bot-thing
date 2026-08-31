@@ -1185,6 +1185,14 @@ def roll_random_vow_timeout() -> int:
 dm_history: dict[str, list[str]] = {}  # username -> list of messages
 DM_HISTORY_MAX_PER_USER = 50  # Store last 50 messages per user
 
+# =========================
+# HEALING VOW AUTO-SAVE
+# =========================
+
+healing_vow_auto_save_cooldown: dict[tuple[int, int], datetime] = {}  # (guild_id, user_id) -> last auto-save time
+HEALING_VOW_AUTO_SAVE_COOLDOWN_HOURS = 0.5  # 30 minutes
+HEALING_VOW_AUTO_SAVE_DELAY_SECONDS = 15
+
 
 def add_dm_to_history(username: str, message_content: str):
     """Add a DM to history, keeping only the last DM_HISTORY_MAX_PER_USER messages."""
@@ -2674,6 +2682,39 @@ async def start_webhook_server():
 
 
 # =========================
+# HEALING VOW AUTO-SAVE HANDLER
+# =========================
+
+async def healing_vow_auto_save(guild_id: int, user_id: int, channel: discord.TextChannel):
+    """Schedule an auto-save for a killed healing vow user after 15 seconds."""
+    await asyncio.sleep(HEALING_VOW_AUTO_SAVE_DELAY_SECONDS)
+    
+    try:
+        member = channel.guild.get_member(user_id)
+        if not member or not member.timed_out_until:
+            return  # Already freed or doesn't exist
+        
+        # Check cooldown
+        last_save = healing_vow_auto_save_cooldown.get((guild_id, user_id))
+        if last_save and datetime.utcnow() - last_save < timedelta(hours=HEALING_VOW_AUTO_SAVE_COOLDOWN_HOURS):
+            return  # On cooldown
+        
+        # Auto-save them
+        if await try_untimeout(member, channel, "healing_vow_auto_save"):
+            save_gifs = get_save_gifs(guild_id)
+            if save_gifs:
+                chosen_gif = random.choice(save_gifs)
+                await channel.send(f"{chosen_gif}\n✨ {member.mention} self-healed with their Healing Vow!")
+            else:
+                await channel.send(f"✨ {member.mention} self-healed with their Healing Vow!")
+            
+            healing_vow_auto_save_cooldown[(guild_id, user_id)] = datetime.utcnow()
+            save_cooldowns()
+    except Exception as e:
+        print(f"[ERROR] healing_vow_auto_save for {user_id}: {e}\n{traceback.format_exc()}")
+
+
+# =========================
 # CLASH RESOLUTION
 # =========================
 
@@ -2720,20 +2761,9 @@ async def finalize_clash(clash_id: int):
                     await channel.send(f"💀 {attacker.mention} [Hakari Vow] lost the gamble — muted 90s lmaooo")
             return
 
-        # No clash, just timeout
+        # No clash, already timed out immediately above
         if len(participants) == 2 and not clash_data.get("target_challenged"):
-            original_target = participants[1]
-            black_flash = roll_black_flash(attacker_vow)
-            if black_flash:
-                actual_duration = int(actual_duration * BLACK_FLASH_MULTIPLIER)
-            if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=actual_duration), channel):
-                if black_flash:
-                    await channel.send(
-                        f"⚡ **BLACK FLASH!** {attacker.mention}{vow_str} landed it — "
-                        f"{original_target.mention} timed out for **{actual_duration}s** (2×)!"
-                    )
-                else:
-                    await channel.send(f"{original_target.mention} has been timed out for {actual_duration}s by {attacker.mention}{vow_str} lmao")
+            # Person is already timed out from immediate timeout, just return
             return
 
         # 1v1 clash — ALL VOW EFFECTS ARE NEGATED during clashes
@@ -2758,10 +2788,8 @@ async def finalize_clash(clash_id: int):
             winner = attacker if attacker_wins else original_target
             loser = original_target if attacker_wins else attacker
 
-            # Use base_timeout (pre-vow) so Destruction/Miracle/Random/Black Flash all no-op here
-            clash_duration = clash_data.get("base_timeout", clash_data["timeout_duration"])
-            if await try_timeout(loser, discord.utils.utcnow() + timedelta(seconds=clash_duration), channel):
-                await channel.send(f"{winner.mention} WON\n{loser.mention} get timed out for {clash_duration}s")
+            # Person is already timed out, so just announce the winner
+            await channel.send(f"{winner.mention} WON — {loser.mention} was already timed out")
             return
 
         # Multi-way clash (3-10) — ALL VOW EFFECTS ARE NEGATED
@@ -2789,12 +2817,9 @@ async def finalize_clash(clash_id: int):
                 break
 
         losers = [p for p in participants if p.id != winner.id]
-        # Use base_timeout (pre-vow) so Destruction/Miracle/Random/Black Flash all no-op
-        clash_duration = clash_data.get("base_timeout", clash_data["timeout_duration"])
         await channel.send(f"🏆 {winner.mention} WON the {len(participants)}-way clash!")
         for loser in losers:
-            if await try_timeout(loser, discord.utils.utcnow() + timedelta(seconds=clash_duration), channel):
-                await channel.send(f"{loser.mention} gets timed out for {clash_duration}s!")
+            await channel.send(f"{loser.mention} is already timed out!")
 
     except asyncio.CancelledError:
         pass
@@ -3197,7 +3222,11 @@ async def on_message(message):
 
         # Standard vows (Destruction, Healing, Hakari, Black Flash, or no vow)
         else:
-            effective_cd = apply_vote_discount(apply_vow(base_cd, action, vow), uid)
+            # Special case: Healing Vow kills are allowed but trigger auto-save
+            if vow == "Healing Vow" and action == "kill":
+                effective_cd = apply_vote_discount(base_cd, uid)
+            else:
+                effective_cd = apply_vote_discount(apply_vow(base_cd, action, vow), uid)
 
             if effective_cd == -1.0:
                 await message.channel.send(f"{message.author.mention}, your {vow} forbids you from this action. 🪹")
@@ -3283,6 +3312,29 @@ async def on_message(message):
                 await bot.process_commands(message)
                 return
 
+        # =========================
+        # IMMEDIATE TIMEOUT (before clash window)
+        # =========================
+        black_flash = roll_black_flash(attacker_vow)
+        if black_flash:
+            actual_timeout = int(timeout_duration * BLACK_FLASH_MULTIPLIER)
+        else:
+            actual_timeout = timeout_duration
+        
+        if await try_timeout(original_target, discord.utils.utcnow() + timedelta(seconds=actual_timeout), message.channel):
+            if black_flash:
+                await message.channel.send(
+                    f"⚡ **BLACK FLASH!** {attacker.mention}{vow_str} landed it — "
+                    f"{original_target.mention} timed out for **{actual_timeout}s** (2×)!"
+                )
+            else:
+                await message.channel.send(f"{original_target.mention} has been timed out for {actual_timeout}s by {attacker.mention}{vow_str} lmao")
+            
+            # Schedule auto-save for Healing Vow
+            if defender_vow_check == "Healing Vow":
+                asyncio.create_task(healing_vow_auto_save(gid, original_target.id, message.channel))
+        
+        # Still create clash entry for potential multi-way clashes, but skip the no-clash timeout
         clash_entry = {
             "participants": [attacker, original_target],
             "head_message_id": message.id,
@@ -3294,6 +3346,7 @@ async def on_message(message):
             "user_id": uid,
             "task": None,
             "window_seconds": CLASH_WINDOW_SECONDS,
+            "already_timed_out": True,  # Mark that we already timed out
         }
         pending_clashes[clash_id] = clash_entry
         clash_head_lookup[message.id] = clash_id

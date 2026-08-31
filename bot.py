@@ -2709,9 +2709,9 @@ async def healing_vow_auto_save(guild_id: int, user_id: int, channel: discord.Te
             save_gifs = get_save_gifs(guild_id)
             if save_gifs:
                 chosen_gif = random.choice(save_gifs)
-                await channel.send(f"{chosen_gif}\n✨ {member.mention} self-healed with their Healing Vow!")
-            else:
-                await channel.send(f"✨ {member.mention} self-healed with their Healing Vow!")
+                await channel.send(chosen_gif)
+            
+            await channel.send(f"✨ {member.mention} self-healed with their Healing Vow!")
             
             healing_vow_auto_save_cooldown[(guild_id, user_id)] = datetime.utcnow()
             save_cooldowns()

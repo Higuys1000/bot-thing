@@ -3282,6 +3282,7 @@ async def on_message(message):
         if vow == "Random Vow":
             last_kill_used[(gid, uid)] = now
             set_random_vow_cd(gid, uid, "kill")
+            timeout_duration = roll_random_vow_timeout()  # Randomize timeout duration
             save_cooldowns()
         elif vow == "Miracle Vow":
             last_kill_used[(gid, uid)] = now
@@ -3333,7 +3334,10 @@ async def on_message(message):
                     f"{original_target.mention} timed out for **{actual_timeout}s** (2×)!"
                 )
             else:
-                await message.channel.send(f"{original_target.mention} has been timed out for {actual_timeout}s by {attacker.mention}{vow_str} lmao")
+                if attacker_vow == "Random Vow":
+                    await message.channel.send(f"{original_target.mention} has been timed out for **{actual_timeout}s** by {attacker.mention}{vow_str} (random roll) lmao")
+                else:
+                    await message.channel.send(f"{original_target.mention} has been timed out for {actual_timeout}s by {attacker.mention}{vow_str} lmao")
             
             # Schedule auto-save for Healing Vow
             if defender_vow_check == "Healing Vow":

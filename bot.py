@@ -1790,6 +1790,41 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
     )
 
 
+def build_commands_embed() -> discord.Embed:
+    embed = discord.Embed(title="🎮 All Commands", color=discord.Color.blurple())
+    embed.add_field(
+        name="Commands (Part 1)",
+        value=(
+            "`!help` — show how the bot works\n"
+            "`!commands` — show all commands\n"
+            "`!vows` — show all Binding Vow descriptions + your status\n"
+            "`!vows change` — pick (or remove with `none`) your own binding vow\n"
+            "`!vows status` — check your current vow & change cooldown\n"
+            "`!vows cooldown` — view server vow-change cooldown\n"
+            "`!vows cooldown @user` — view someone's current vow & cooldown\n"
+            "`!vows cooldown <hours>` — set server cooldown *(mods only)*\n"
+            "`!vows cooldown reset @user` — reset a user's vow-change cooldown *(mods only)*\n"
+            "`!vote` — get the vote link (voting resets your cooldowns)\n"
+            "`!patreon` — support the bot on Patreon"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="Commands (Part 2)",
+        value=(
+            "`!list [kill|save]` — browse this server's kill or save GIFs (anyone)\n"
+            "`@bot` or `!cooldown [@user]` — check your (or someone else's) cooldown\n"
+            "`!resetcooldown @user [kill|save|both]` — reset a cooldown *(mods only)*\n"
+            "`!setup view` — view current server config *(mods only)*\n"
+            "`!setup roles` — configure default role, cooldown, and per-role settings *(mods only)*\n"
+            "`!setup killgifs` — manage kill GIFs for this server *(mods only)*\n"
+            "`!setup savegifs` — manage save GIFs for this server *(mods only)*"
+        ),
+        inline=False
+    )
+    return embed
+
+
 def build_help_embed(guild_id: int) -> discord.Embed:
     default_cd = get_default_cooldown(guild_id)
     default_to = get_default_timeout(guild_id)
@@ -1798,9 +1833,9 @@ def build_help_embed(guild_id: int) -> discord.Embed:
     embed.add_field(
         name="How it works",
         value=(
-            "Reply to someone's message with a **kill GIF** to time them out.\n"
+            "Reply to someone's message with a **kill GIF** to time them out **immediately**.\n"
             "Reply to a timed-out user's message with a **save GIF** to free them early.\n"
-            "If anyone replies to the kill GIF chain with another kill GIF within 5 seconds, a **Clash** happens — "
+            "If anyone replies to your kill GIF with another kill GIF within 5 seconds, a **Clash** happens — "
             "up to 10 fighters can join! The winner is decided by a weighted roll: each fighter's **power** stat "
             "(set per-role) is how many tickets they get in the lottery. More power = more likely to win, but never guaranteed. "
             "Everyone except the winner gets timed out.\n\n"
@@ -1829,26 +1864,8 @@ def build_help_embed(guild_id: int) -> discord.Embed:
         inline=False
     )
     embed.add_field(
-        name="Commands",
-        value=(
-            "`!help` — show this message\n"
-            "`!vows` — show all Binding Vow descriptions + your status\n"
-            "`!vows change` — pick (or remove with `none`) your own binding vow\n"
-            "`!vows status` — check your current vow & change cooldown\n"
-            "`!vows cooldown` — view server vow-change cooldown\n"
-            "`!vows cooldown @user` — view someone's current vow & cooldown\n"
-            "`!vows cooldown <hours>` — set server cooldown *(mods only)*\n"
-            "`!vows cooldown reset @user` — reset a user's vow-change cooldown *(mods only)*\n"
-            "`!vote` — get the vote link (voting resets your cooldowns)\n"
-            "`!patreon` — support the bot on Patreon\n"
-            "`!list [kill|save]` — browse this server's kill or save GIFs (anyone)\n"
-            "`@bot` or `!cooldown [@user]` — check your (or someone else's) cooldown\n"
-            "`!resetcooldown @user [kill|save|both]` — reset a cooldown *(mods only)*\n"
-            "`!setup view` — view current server config *(mods only)*\n"
-            "`!setup roles` — configure default role, cooldown, and per-role settings *(mods only)*\n"
-            "`!setup killgifs` — manage kill GIFs for this server *(mods only)*\n"
-            "`!setup savegifs` — manage save GIFs for this server *(mods only)*"
-        ),
+        name="📋 Commands",
+        value="Type `!commands` to see all available commands!",
         inline=False
     )
     return embed
@@ -2104,7 +2121,15 @@ def is_mod(member: discord.Member) -> bool:
 
 @bot.command(name="help")
 async def prefix_help(ctx):
+    if not ctx.guild:
+        await ctx.send("This command must be used in a server.")
+        return
     await ctx.send(embed=build_help_embed(ctx.guild.id))
+
+
+@bot.command(name="commands")
+async def prefix_commands(ctx):
+    await ctx.send(embed=build_commands_embed())
 
 
 @bot.command(name="vows")
@@ -2373,6 +2398,11 @@ async def slash_help(interaction: discord.Interaction):
         await interaction.response.send_message("This command must be used in a server.", ephemeral=True)
         return
     await interaction.response.send_message(embed=build_help_embed(interaction.guild_id))
+
+
+@bot.tree.command(name="commands", description="Show all available commands")
+async def slash_commands(interaction: discord.Interaction):
+    await interaction.response.send_message(embed=build_commands_embed())
 
 
 vows_group = app_commands.Group(name="vows", description="View binding vows and manage your own")

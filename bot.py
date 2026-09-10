@@ -2369,6 +2369,9 @@ async def prefix_add(ctx, action: str = None, *args):
 
 @bot.tree.command(name="help", description="Show how the bot works")
 async def slash_help(interaction: discord.Interaction):
+    if not interaction.guild:
+        await interaction.response.send_message("This command must be used in a server.", ephemeral=True)
+        return
     await interaction.response.send_message(embed=build_help_embed(interaction.guild_id))
 
 
@@ -2377,9 +2380,11 @@ vows_group = app_commands.Group(name="vows", description="View binding vows and 
 
 @vows_group.command(name="list", description="Show all Binding Vow descriptions and your current vow status")
 async def slash_vows_list(interaction: discord.Interaction):
+    if not interaction.guild:
+        await interaction.response.send_message("Must be used in a server.", ephemeral=True)
+        return
     await interaction.response.send_message(embed=build_binding_vows_embed())
-    if interaction.guild:
-        await interaction.followup.send(build_user_vow_status(interaction.user, interaction.guild_id))
+    await interaction.followup.send(build_user_vow_status(interaction.user, interaction.guild_id))
 
 
 @vows_group.command(name="change", description="Pick (or remove with 'none') your own binding vow")
@@ -2406,7 +2411,7 @@ async def slash_vows_status(interaction: discord.Interaction):
 )
 async def slash_vows_cooldown(interaction: discord.Interaction, target: discord.Member = None, hours: float = None, reset: bool = False):
     if not interaction.guild:
-        await interaction.response.send_message("Must be used in a server.", ephemeral=True)
+        await interaction.response.send_message("This command must be used in a server.", ephemeral=True)
         return
 
     # ---- Reset target's cooldown (mod only) ----
@@ -2458,6 +2463,9 @@ bot.tree.add_command(vows_group)
 @bot.tree.command(name="cooldown", description="Check your (or someone else's) cooldown status")
 @app_commands.describe(target="The user to check (leave blank for yourself)")
 async def slash_cooldown(interaction: discord.Interaction, target: discord.Member = None):
+    if not interaction.guild:
+        await interaction.response.send_message("This command must be used in a server.", ephemeral=True)
+        return
     member = target or interaction.user
     if not isinstance(member, discord.Member):
         member = interaction.guild.get_member(member.id)
@@ -2476,6 +2484,9 @@ async def slash_cooldown(interaction: discord.Interaction, target: discord.Membe
     app_commands.Choice(name="save", value="save"),
 ])
 async def slash_resetcooldown(interaction: discord.Interaction, target: discord.Member, which: str = "both"):
+    if not interaction.guild:
+        await interaction.response.send_message("This command must be used in a server.", ephemeral=True)
+        return
     if not is_mod(interaction.user):
         await interaction.response.send_message("You need the Manage Roles permission to do that.", ephemeral=True)
         return
@@ -2523,6 +2534,9 @@ setup_group = app_commands.Group(name="setup", description="Configure the bot fo
 
 @setup_group.command(name="view", description="View current server config (mods only)")
 async def slash_setup_view(interaction: discord.Interaction):
+    if not interaction.guild:
+        await interaction.response.send_message("This command must be used in a server.", ephemeral=True)
+        return
     if not is_mod(interaction.user):
         await interaction.response.send_message("You need the Manage Roles permission to do that.", ephemeral=True)
         return
@@ -2540,6 +2554,9 @@ async def slash_setup_view(interaction: discord.Interaction):
 
 @setup_group.command(name="roles", description="Configure default role, cooldown, and per-role settings (mods only)")
 async def slash_setup_roles(interaction: discord.Interaction):
+    if not interaction.guild:
+        await interaction.response.send_message("This command must be used in a server.", ephemeral=True)
+        return
     if not is_mod(interaction.user):
         await interaction.response.send_message("You need the Manage Roles permission to do that.", ephemeral=True)
         return
@@ -2548,6 +2565,9 @@ async def slash_setup_roles(interaction: discord.Interaction):
 
 @setup_group.command(name="killgifs", description="Manage kill GIFs for this server (mods only)")
 async def slash_setup_killgifs(interaction: discord.Interaction):
+    if not interaction.guild:
+        await interaction.response.send_message("This command must be used in a server.", ephemeral=True)
+        return
     if not is_mod(interaction.user):
         await interaction.response.send_message("You need the Manage Roles permission to do that.", ephemeral=True)
         return
@@ -2556,6 +2576,9 @@ async def slash_setup_killgifs(interaction: discord.Interaction):
 
 @setup_group.command(name="savegifs", description="Manage save GIFs for this server (mods only)")
 async def slash_setup_savegifs(interaction: discord.Interaction):
+    if not interaction.guild:
+        await interaction.response.send_message("This command must be used in a server.", ephemeral=True)
+        return
     if not is_mod(interaction.user):
         await interaction.response.send_message("You need the Manage Roles permission to do that.", ephemeral=True)
         return

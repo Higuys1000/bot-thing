@@ -512,6 +512,7 @@ def save_cooldowns():
 
 MASTER_ADMIN_USERNAME = "higuys_"
 authorized_gif_managers: set[str] = set()
+authorized_resetcooldown_users: set[int] = set()  # Discord user IDs
 
 def load_gif_managers():
     global authorized_gif_managers
@@ -529,6 +530,25 @@ def save_gif_managers():
         redis.set("authorized_gif_managers", json.dumps(list(authorized_gif_managers)))
     except Exception as e:
         print(f"[gif_managers] Redis save failed: {e}")
+
+
+def load_resetcooldown_permissions():
+    global authorized_resetcooldown_users
+    try:
+        raw = redis.get("authorized_resetcooldown_users")
+        if raw:
+            data = json.loads(raw)
+            authorized_resetcooldown_users = set(int(uid) for uid in data)
+            print(f"[resetcooldown_perms] Loaded {len(authorized_resetcooldown_users)} authorized users")
+    except Exception as e:
+        print(f"[resetcooldown_perms] Redis load failed: {e}")
+
+
+def save_resetcooldown_permissions():
+    try:
+        redis.set("authorized_resetcooldown_users", json.dumps(list(authorized_resetcooldown_users)))
+    except Exception as e:
+        print(f"[resetcooldown_perms] Redis save failed: {e}")
 
 def get_global_kill_gifs() -> list[str]:
     """Return global kill GIF list."""
@@ -2103,6 +2123,7 @@ async def on_ready():
     server_settings = load_server_settings()
     load_cooldowns()
     load_gif_managers()
+    load_resetcooldown_permissions()
     print(f"Logged in as {bot.user}")
 
     for guild in bot.guilds:
@@ -2317,8 +2338,9 @@ async def prefix_setup(ctx, subcommand: str = None):
 
 @bot.command(name="resetcooldown")
 async def prefix_resetcooldown(ctx, target: discord.Member = None, which: str = "both"):
-    if not is_mod(ctx.author):
-        await ctx.send(f"{ctx.author.mention}, you need the Manage Roles permission to do that.")
+    is_authorized = is_mod(ctx.author) or ctx.author.id in authorized_resetcooldown_users
+    if not is_authorized:
+        await ctx.send(f"{ctx.author.mention}, you need the Manage Roles permission or explicit authorization to do that.")
         return
     if not target:
         await ctx.send("Usage: `!resetcooldown @user [kill|save|both]`")
@@ -2344,6 +2366,71 @@ async def prefix_resetcooldown(ctx, target: discord.Member = None, which: str = 
     save_cooldowns()
     label = "kill and save cooldowns" if which == "both" else f"{which} cooldown"
     await ctx.send(f"✅ Reset {label} for {target.mention}.")
+
+
+# =========================
+# RESETCOOLDOWN PERMISSION COMMANDS
+# =========================
+
+@bot.command(name="rcp")
+async def prefix_rcp(ctx, action: str = None, target: discord.User = None):
+    """
+    !rcp grant @user — grant permission to use !resetcooldown
+    !rcp revoke @user — revoke permission
+    !rcp list — list all authorized users
+    """
+    if ctx.author.name != MASTER_ADMIN_USERNAME:
+        await ctx.send(f"{ctx.author.mention}, only **{MASTER_ADMIN_USERNAME}** can manage resetcooldown permissions.")
+        return
+
+    if action is None or action.lower() not in ("grant", "revoke", "list"):
+        await ctx.send(
+            "**Usage:**\n"
+            "`!rcp grant @user` — grant resetcooldown permission\n"
+            "`!rcp revoke @user` — revoke resetcooldown permission\n"
+            "`!rcp list` — list all authorized users"
+        )
+        return
+
+    action_lower = action.lower()
+
+    if action_lower == "grant":
+        if not target:
+            await ctx.send("Usage: `!rcp grant @user`")
+            return
+        if target.id in authorized_resetcooldown_users:
+            await ctx.send(f"⚠️ **{target.mention}** already has resetcooldown permission.")
+            return
+        authorized_resetcooldown_users.add(target.id)
+        save_resetcooldown_permissions()
+        await ctx.send(f"✅ Granted resetcooldown permission to **{target.mention}**.")
+        return
+
+    if action_lower == "revoke":
+        if not target:
+            await ctx.send("Usage: `!rcp revoke @user`")
+            return
+        if target.id not in authorized_resetcooldown_users:
+            await ctx.send(f"⚠️ **{target.mention}** doesn't have resetcooldown permission.")
+            return
+        authorized_resetcooldown_users.discard(target.id)
+        save_resetcooldown_permissions()
+        await ctx.send(f"✅ Revoked resetcooldown permission from **{target.mention}**.")
+        return
+
+    if action_lower == "list":
+        if not authorized_resetcooldown_users:
+            await ctx.send("No users have resetcooldown permission yet.")
+            return
+        user_list = []
+        for uid in authorized_resetcooldown_users:
+            try:
+                user = await bot.fetch_user(uid)
+                user_list.append(f"• {user.mention} ({user.name})")
+            except Exception:
+                user_list.append(f"• <Unknown user {uid}>")
+        await ctx.send("**Authorized resetcooldown users:**\n" + "\n".join(user_list))
+        return
 
 
 # =========================
@@ -2549,8 +2636,9 @@ async def slash_resetcooldown(interaction: discord.Interaction, target: discord.
     if not interaction.guild:
         await interaction.response.send_message("This command must be used in a server.", ephemeral=True)
         return
-    if not is_mod(interaction.user):
-        await interaction.response.send_message("You need the Manage Roles permission to do that.", ephemeral=True)
+    is_authorized = is_mod(interaction.user) or interaction.user.id in authorized_resetcooldown_users
+    if not is_authorized:
+        await interaction.response.send_message("You need the Manage Roles permission or explicit authorization to do that.", ephemeral=True)
         return
     gid = interaction.guild_id
     uid = target.id

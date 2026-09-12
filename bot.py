@@ -612,37 +612,6 @@ def save_save_gifs(guild_id: int, gifs: list[str]):
 
 
 # =========================
-# COW PICTURES
-# =========================
-
-COW_PICTURES = [
-    "https://images.unsplash.com/photo-1586985289688-cacf58ba6952?w=400",
-    "https://images.unsplash.com/photo-1564349743710-1ce4fcf3ffb2?w=400",
-    "https://images.unsplash.com/photo-1567270671170-fdc10a5bf831?w=400",
-]
-
-
-def get_cow_pictures() -> list[str]:
-    """Return global cow pictures list."""
-    try:
-        raw = redis.get("global:cow_pictures")
-        if raw:
-            data = json.loads(raw)
-            if data:
-                return data
-    except Exception as e:
-        print(f"[cow] Redis get cow pictures failed: {e}")
-    return COW_PICTURES
-
-
-def save_cow_pictures(pictures: list[str]):
-    try:
-        redis.set("global:cow_pictures", json.dumps(pictures))
-    except Exception as e:
-        print(f"[cow] Redis save cow pictures failed: {e}")
-
-
-# =========================
 # PAGINATED LIST (anyone can use)
 # =========================
 
@@ -1018,10 +987,10 @@ BINDING_VOWS = {
         "save_multiplier": 1.2,
         "description": "Kill & save CDs ×1.2. On each kill, 25% chance to land a Black Flash and time the target out for **2× longer**. Works in clashes too — only triggers for whoever delivers the timeout.",
     },
-    "Cow Vow": {
-        "kill_multiplier": None,
+    "Aura Vow": {
+        "kill_multiplier": 1.0,
         "save_multiplier": 1.0,
-        "description": "Cannot kill anyone — instead, when you send a kill GIF, the bot sends a fluffy cow picture! Save works normally.",
+        "description": "Ping the bot in a reply to someone to send them a random kill GIF and time them out! Works with normal kill cooldown.",
     },
 }
 
@@ -1069,11 +1038,9 @@ def get_active_vow(author_roles: list[str], guild_id: int | None = None, user_id
 
 
 def apply_vow(base_cooldown_hours: float, action: str, vow_name: str | None) -> float:
-    if not vow_name or vow_name in ("CONFLICT", "Stack Vow", "Random Vow", "Miracle Vow", "Cow Vow") or vow_name not in BINDING_VOWS:
+    if not vow_name or vow_name in ("CONFLICT", "Stack Vow", "Random Vow", "Miracle Vow") or vow_name not in BINDING_VOWS:
         if vow_name == "Miracle Vow":
             return max(0.0, base_cooldown_hours * 2.5)
-        if vow_name == "Cow Vow":
-            return max(0.0, base_cooldown_hours)  # Normal cooldown for Cow Vow
         return max(0.0, base_cooldown_hours)
     vow = BINDING_VOWS[vow_name]
     multiplier = vow["kill_multiplier"] if action == "kill" else vow["save_multiplier"]
@@ -1795,7 +1762,7 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
             f"💚 Save CD ({save_cd:.4g}h): {format_cd_simple(save_cd, last_save)}{note}"
         )
 
-    if vow == "Cow Vow":
+    if vow == "Aura Vow":
         kill_cd = apply_vote_discount(base_cd, uid)
         save_cd = apply_vote_discount(base_cd, uid)
         last_kill = last_kill_used.get((gid, uid))
@@ -1811,8 +1778,8 @@ def build_cooldown_status(member: discord.Member, guild_id: int) -> str:
         save_not_ready = last_save and now - last_save < timedelta(hours=save_cd)
         note = vote_note(uid) if (kill_not_ready or save_not_ready) else ""
         return (
-            f"{member.mention}, ({role_label} [Cow Vow]) 🐄\n"
-            f"🐄 Cow Send CD ({kill_cd:.4g}h): {format_cd_simple(kill_cd, last_kill)}\n"
+            f"{member.mention}, ({role_label} [Aura Vow]) ✨\n"
+            f"✨ Aura Kill CD ({kill_cd:.4g}h): {format_cd_simple(kill_cd, last_kill)}\n"
             f"💚 Save CD ({save_cd:.4g}h): {format_cd_simple(save_cd, last_save)}{note}"
         )
 
@@ -2451,97 +2418,6 @@ async def prefix_add(ctx, action: str = None, *args):
 # COW COMMAND
 # =========================
 
-@bot.command(name="cow")
-async def prefix_cow(ctx, action: str = None, *args):
-    """
-    !cow add <url> — add a fluffy cow picture
-    !cow list — browse cow pictures
-    """
-    if action is None:
-        await ctx.send(
-            "**Usage:**\n"
-            "`!cow add <url>` — add a fluffy cow picture\n"
-            "`!cow list` — browse cow pictures"
-        )
-        return
-
-    action_lower = action.lower()
-
-    if action_lower == "add":
-        if not args:
-            await ctx.send("Usage: `!cow add <url>`")
-            return
-
-        url = args[0]
-        if not (url.startswith("http://") or url.startswith("https://")):
-            await ctx.send("⚠️ That doesn't look like a valid URL.")
-            return
-
-        current = get_cow_pictures()
-        if url in current:
-            await ctx.send("⚠️ That cow picture is already in the list.")
-            return
-
-        current.append(url)
-        save_cow_pictures(current)
-        await ctx.send(f"🐄 Added fluffy cow picture! ({len(current)} total)")
-        return
-
-    if action_lower == "list":
-        current = get_cow_pictures()
-        if not current:
-            await ctx.send("No cow pictures yet!")
-            return
-
-        PAGE_SIZE = 5
-        total_pages = (len(current) + PAGE_SIZE - 1) // PAGE_SIZE
-        page = 0
-
-        def build_page(p: int) -> str:
-            start = p * PAGE_SIZE
-            lines = [f"{start + j + 1}. {current[start + j]}" for j in range(min(PAGE_SIZE, len(current) - start))]
-            nav_hints = []
-            if p > 0:
-                nav_hints.append("`back`")
-            if p + 1 < total_pages:
-                nav_hints.append("`next`")
-            nav_str = " · ".join(nav_hints) if nav_hints else "*(only page)*"
-            return (
-                f"**🐄 Fluffy Cow Pictures — page {p + 1}/{total_pages} ({len(current)} total):**\n"
-                + "\n".join(lines)
-                + f"\n\nNavigate: {nav_str} · type anything else to exit"
-            )
-
-        list_msg = await ctx.send(build_page(page))
-
-        def check(m):
-            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
-
-        while True:
-            try:
-                msg = await bot.wait_for("message", timeout=60.0, check=check)
-            except asyncio.TimeoutError:
-                try:
-                    await list_msg.edit(content=build_page(page) + "\n\n*(timed out)*")
-                except Exception:
-                    pass
-                return
-
-            nav = msg.content.strip().lower()
-            if nav == "next" and page + 1 < total_pages:
-                page += 1
-                try:
-                    await list_msg.edit(content=build_page(page))
-                except Exception:
-                    pass
-            elif nav == "back" and page > 0:
-                page -= 1
-                try:
-                    await list_msg.edit(content=build_page(page))
-                except Exception:
-                    pass
-            else:
-                return
 
 
 # =========================
@@ -3136,6 +3012,64 @@ async def on_message(message):
                 pass
             return
 
+    # =========================
+    # AURA VOW HANDLING (ping bot in reply)
+    # =========================
+    if message.reference and bot.user in message.mentions:
+        if not message.guild:
+            await bot.process_commands(message)
+            return
+        
+        author_roles = [role.name for role in message.author.roles]
+        gid = message.guild.id
+        uid = message.author.id
+        author_vow = get_active_vow(author_roles, gid, uid)
+        
+        if author_vow == "Aura Vow":
+            # Get the replied-to message
+            try:
+                replied_message = await message.channel.fetch_message(message.reference.message_id)
+            except Exception as e:
+                await log_error(message.guild, "aura vow: fetch replied message", e)
+                await bot.process_commands(message)
+                return
+            
+            member_to_timeout = message.guild.get_member(replied_message.author.id)
+            if not member_to_timeout:
+                await bot.process_commands(message)
+                return
+            
+            # Check cooldown
+            now = datetime.utcnow()
+            base_cd = get_default_cooldown(gid)
+            effective_cd = apply_vote_discount(base_cd, uid)
+            last_kill = last_kill_used.get((gid, uid))
+            
+            if last_kill and now - last_kill < timedelta(hours=effective_cd):
+                remaining = timedelta(hours=effective_cd) - (now - last_kill)
+                await message.channel.send(f"{message.author.mention}, kill cooldown remaining: **{str(remaining).split('.')[0]}**")
+                await bot.process_commands(message)
+                return
+            
+            # Get timeout duration and send kill gif
+            base_timeout = get_default_timeout(gid)
+            timeout_duration = base_timeout
+            
+            # Send random kill gif
+            kill_gifs = get_kill_gifs(gid)
+            if kill_gifs:
+                chosen_gif = random.choice(kill_gifs)
+                await message.channel.send(chosen_gif)
+            
+            # Timeout the target
+            if await try_timeout(member_to_timeout, discord.utils.utcnow() + timedelta(seconds=timeout_duration), message.channel):
+                await message.channel.send(f"{member_to_timeout.mention} has been timed out for {timeout_duration}s by {message.author.mention} [Aura Vow] lmao")
+                last_kill_used[(gid, uid)] = now
+                save_cooldowns()
+            
+            await bot.process_commands(message)
+            return
+
     author_roles = [role.name for role in message.author.roles]
     gid = message.guild.id
     uid = message.author.id
@@ -3528,23 +3462,6 @@ async def on_message(message):
                 return
 
         # =========================
-        # COW VOW SPECIAL HANDLING
-        # =========================
-        if attacker_vow == "Cow Vow":
-            # Send a fluffy cow picture instead of timing out
-            cow_pictures = get_cow_pictures()
-            if cow_pictures:
-                chosen_cow = random.choice(cow_pictures)
-                await message.channel.send(chosen_cow)
-            
-            await message.channel.send(f"🐄 {attacker.mention} [Cow Vow] sent a fluffy cow at {original_target.mention}! No timeout, just vibes.")
-            
-            # Mark kill as used for cooldown purposes
-            last_kill_used[(gid, uid)] = now
-            save_cooldowns()
-            await bot.process_commands(message)
-            return
-
         # =========================
         # IMMEDIATE TIMEOUT (before clash window)
         # =========================

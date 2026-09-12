@@ -3018,9 +3018,41 @@ async def on_message(message):
     # DM FORWARDING & HISTORY LOOKUP
     # =========================
     if isinstance(message.channel, discord.DMChannel):
-        # Check if this is higuys_ querying history
+        # Check if this is higuys_
         if message.author.name == MASTER_ADMIN_USERNAME:
-            query_username = message.content.strip()
+            content = message.content.strip()
+            
+            # Check if message contains a space (format: "username message")
+            if " " in content:
+                # Parse as "username message"
+                parts = content.split(None, 1)  # Split on first whitespace
+                target_username = parts[0]
+                dm_message = parts[1]
+                
+                # Find the user by username
+                target_user = None
+                for guild in bot.guilds:
+                    for member in guild.members:
+                        if member.name.lower() == target_username.lower():
+                            target_user = member
+                            break
+                    if target_user:
+                        break
+                
+                if not target_user:
+                    await message.channel.send(f"❌ User **{target_username}** not found in any guild.")
+                    return
+                
+                # Send the DM
+                try:
+                    await target_user.send(dm_message)
+                    await message.channel.send(f"✅ Sent DM to **{target_user.name}**: {dm_message[:100]}")
+                except Exception as e:
+                    await message.channel.send(f"❌ Failed to send DM to **{target_user.name}**: {e}")
+                return
+            
+            # No space = query history (original behavior)
+            query_username = content
             history = get_dm_history(query_username)
             
             if history:

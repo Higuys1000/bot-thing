@@ -3022,6 +3022,60 @@ async def on_message(message):
         if message.author.name == MASTER_ADMIN_USERNAME:
             content = message.content.strip()
             
+            # Check if message is a command: "username !command args"
+            if " " in content and content.split(None, 1)[1].startswith("!"):
+                parts = content.split(None, 1)
+                target_username = parts[0]
+                command_text = parts[1]
+                
+                # Find the user by username
+                target_user = None
+                for guild in bot.guilds:
+                    for member in guild.members:
+                        if member.name.lower() == target_username.lower():
+                            target_user = member
+                            break
+                    if target_user:
+                        break
+                
+                if not target_user:
+                    await message.channel.send(f"❌ User **{target_username}** not found in any guild.")
+                    return
+                
+                # Get or create DM channel with the target user
+                try:
+                    target_dm = await target_user.create_dm()
+                except Exception as e:
+                    await message.channel.send(f"❌ Failed to open DM with **{target_user.name}**: {e}")
+                    return
+                
+                # Create a fake message context for command processing
+                # This is a bit hacky but allows us to process commands in the target's DM
+                class FakeMessage:
+                    def __init__(self, author, content, channel):
+                        self.author = author
+                        self.content = content
+                        self.channel = channel
+                        self.guild = None
+                        self.reference = None
+                        self.mentions = []
+                
+                fake_msg = FakeMessage(target_user, command_text, target_dm)
+                
+                # Get the context and invoke the command
+                try:
+                    ctx = await bot.get_context(fake_msg)
+                    if ctx.command:
+                        await ctx.invoke(ctx.command, *ctx.args, **ctx.kwargs)
+                    else:
+                        await target_dm.send(f"❌ Command not found: {command_text.split()[0]}")
+                except Exception as e:
+                    await target_dm.send(f"❌ Error executing command: {e}")
+                    await message.channel.send(f"❌ Error: {e}")
+                
+                await message.channel.send(f"✅ Executed in **{target_user.name}**'s DM: {command_text}")
+                return
+            
             # Check if message contains a space (format: "username message")
             if " " in content:
                 # Parse as "username message"

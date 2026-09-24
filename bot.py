@@ -511,6 +511,15 @@ def save_cooldowns():
 # =========================
 
 MASTER_ADMIN_USERNAME = "higuys_"
+
+def is_master_admin(user) -> bool:
+    """Master admin bypasses every role gate, regardless of which roles they hold."""
+    return getattr(user, "name", None) == MASTER_ADMIN_USERNAME
+
+def is_cooldown_exempt(user) -> bool:
+    """Master admin is never blocked by a cooldown or a vow charge limit."""
+    return is_master_admin(user)
+
 authorized_gif_managers: set[str] = set()
 authorized_resetcooldown_users: set[int] = set()  # Discord user IDs
 
@@ -3219,7 +3228,7 @@ async def on_message(message):
             effective_cd = apply_vote_discount(base_cd, uid)
             last_kill = last_kill_used.get((gid, uid))
             
-            if last_kill and now - last_kill < timedelta(hours=effective_cd):
+            if last_kill and now - last_kill < timedelta(hours=effective_cd) and not is_cooldown_exempt(message.author):
                 remaining = timedelta(hours=effective_cd) - (now - last_kill)
                 await message.channel.send(f"{message.author.mention}, kill cooldown remaining: **{str(remaining).split('.')[0]}**")
                 await bot.process_commands(message)
@@ -3257,12 +3266,12 @@ async def on_message(message):
             default_role_id_for_mention is not None and
             any(r.id == default_role_id_for_mention for r in message.author.roles)
         )
-        if default_role_id_for_mention is not None and not has_named_role_mention and not has_required_role_mention:
+        if (default_role_id_for_mention is not None and not has_named_role_mention
+                and not has_required_role_mention and not is_master_admin(message.author)):
             required_role = message.guild.get_role(default_role_id_for_mention)
             role_name = required_role.name if required_role else "the required role"
             await message.channel.send(
-                f"{message.author.mention}, you can only use GIFs if you have the **{role_name}** role. "
-                f"Subscribe to the Patreon for early access: https://www.patreon.com/15981390/join"
+                f"{message.author.mention}, you can only use GIFs if you have the **{role_name}** role."
             )
             return
         msg = build_cooldown_status(message.author, gid)
@@ -3285,7 +3294,7 @@ async def on_message(message):
     # =========================
     # UNGUHABLE ROLE CHECK
     # =========================
-    if (is_kill_gif or is_save_gif) and UNGUHABLE_ROLE in author_roles:
+    if (is_kill_gif or is_save_gif) and UNGUHABLE_ROLE in author_roles and not is_master_admin(message.author):
         action = "use kill GIFs" if is_kill_gif else "use save GIFs"
         await message.channel.send(f"{message.author.mention}, you have the **{UNGUHABLE_ROLE}** role and can't {action}.")
         await bot.process_commands(message)
@@ -3378,12 +3387,12 @@ async def on_message(message):
         any(r.id == default_role_id for r in message.author.roles)
     )
 
-    if default_role_id is not None and not has_named_role and not has_required_role:
+    if (default_role_id is not None and not has_named_role
+            and not has_required_role and not is_master_admin(message.author)):
         required_role = message.guild.get_role(default_role_id)
         role_name = required_role.name if required_role else "the required role"
         await message.channel.send(
-            f"{message.author.mention}, you need the **{role_name}** role to use GIFs! "
-            f"Subscribe to the Patreon for early access: https://www.patreon.com/15981390/join"
+            f"{message.author.mention}, you need the **{role_name}** role to use GIFs!"
         )
         return
 
@@ -3405,10 +3414,75 @@ async def on_message(message):
         )
         vow = None
 
+    # Set once here so both the save and kill paths can read it; the kill path
+    # refines it per-vow below.
+    vow_str = format_vow_label(vow)
+
     # =========================
     # SAVE GIF
     # =========================
     if is_save_gif:
+        # =========================
+        # SAVE COOLDOWN GATE
+        # Mirrors the kill path. Stack Vow charges are spent here so the refund
+        # branches below can hand them back when the save doesn't land.
+        # =========================
+        exempt = is_cooldown_exempt(message.author)
+
+        if vow == "Stack Vow":
+            sv_cd = apply_vote_discount(base_cd * STACK_VOW_MULTIPLIER, uid)
+            available = stack_vow_available_charges(gid, uid, action, sv_cd, now)
+            charge_cd = stack_vow_charge_cooldown_remaining(gid, uid, action, now)
+            if charge_cd and not exempt:
+                await message.channel.send(
+                    f"{message.author.mention}, [Stack Vow] {action} charge on cooldown: **{str(charge_cd).split('.')[0]}**{vote_note(uid)}"
+                )
+                return
+            if available == 0 and not exempt:
+                next_regen = stack_vow_next_regen(gid, uid, action, sv_cd, now)
+                await message.channel.send(
+                    f"{message.author.mention}, [Stack Vow] no {action} charges left — next charge in **{str(next_regen).split('.')[0]}**{vote_note(uid)}"
+                )
+                return
+            stack_vow_consume_charge(gid, uid, action, now)
+            vow_str = f" [Stack Vow | {max(0, available - 1)}/{STACK_VOW_MAX_CHARGES} {action} charges left]"
+
+        elif vow == "Random Vow":
+            rv_cd_raw = get_random_vow_cd(gid, uid, action)
+            rv_cd = apply_vote_discount(rv_cd_raw, uid) if rv_cd_raw is not None else None
+            last = last_save_used.get((gid, uid))
+            if (rv_cd is not None and last is not None and now - last < timedelta(hours=rv_cd)
+                    and not exempt):
+                remaining_cd = timedelta(hours=rv_cd) - (now - last)
+                await message.channel.send(
+                    f"{message.author.mention}, [Random Vow] cooldown remaining: **{str(remaining_cd).split('.')[0]}** (rolled {rv_cd_raw:.2f}h)"
+                )
+                return
+
+        elif vow == "Miracle Vow":
+            miracle_cd = apply_vote_discount(base_cd * 2.5, uid)
+            last = last_save_used.get((gid, uid))
+            if last and now - last < timedelta(hours=miracle_cd) and not exempt:
+                remaining_cd = timedelta(hours=miracle_cd) - (now - last)
+                await message.channel.send(
+                    f"{message.author.mention}, [Miracle Vow] cooldown remaining: **{str(remaining_cd).split('.')[0]}**{vote_note(uid)}"
+                )
+                return
+
+        else:
+            effective_cd = apply_vote_discount(apply_vow(base_cd, action, vow), uid)
+            if effective_cd == -1.0:
+                await message.channel.send(f"{message.author.mention}, your {vow} forbids you from this action. 🪹")
+                return
+            last = last_save_used.get((gid, uid))
+            if effective_cd > 0 and last and not exempt:
+                if now - last < timedelta(hours=effective_cd):
+                    remaining_cd = timedelta(hours=effective_cd) - (now - last)
+                    await message.channel.send(
+                        f"{message.author.mention}, ({role_label}{vow_str}) cooldown remaining: {str(remaining_cd).split('.')[0]}{vote_note(uid)}"
+                    )
+                    return
+
         if not member_to_timeout.timed_out_until:
             await message.channel.send("They're not even timed out bro 💀")
             if action == "save":
@@ -3475,8 +3549,6 @@ async def on_message(message):
     # KILL GIF
     # =========================
     if is_kill_gif:
-        vow_str = format_vow_label(vow)
-
         # Stack Vow
         if vow == "Stack Vow":
             sv_cd = apply_vote_discount(base_cd * STACK_VOW_MULTIPLIER, uid)
@@ -3484,20 +3556,20 @@ async def on_message(message):
             
             # Check charge cooldown before checking availability
             charge_cd = stack_vow_charge_cooldown_remaining(gid, uid, action, now)
-            if charge_cd:
+            if charge_cd and not is_cooldown_exempt(message.author):
                 await message.channel.send(
                     f"{message.author.mention}, [Stack Vow] {action} charge on cooldown: **{str(charge_cd).split('.')[0]}**{vote_note(uid)}"
                 )
                 return
             
-            if available == 0:
+            if available == 0 and not is_cooldown_exempt(message.author):
                 next_regen = stack_vow_next_regen(gid, uid, action, sv_cd, now)
                 await message.channel.send(
                     f"{message.author.mention}, [Stack Vow] no {action} charges left — next charge in **{str(next_regen).split('.')[0]}**{vote_note(uid)}"
                 )
                 return
             stack_vow_consume_charge(gid, uid, action, now)
-            remaining_after = available - 1
+            remaining_after = max(0, available - 1)
             vow_str = f" [Stack Vow | {remaining_after}/{STACK_VOW_MAX_CHARGES} {action} charges left]"
 
         # Random Vow
@@ -3505,7 +3577,8 @@ async def on_message(message):
             rv_cd_raw = get_random_vow_cd(gid, uid, action)
             rv_cd = apply_vote_discount(rv_cd_raw, uid) if rv_cd_raw is not None else None
             last = last_kill_used.get((gid, uid)) if action == "kill" else last_save_used.get((gid, uid))
-            if rv_cd is not None and last is not None and now - last < timedelta(hours=rv_cd):
+            if (rv_cd is not None and last is not None and now - last < timedelta(hours=rv_cd)
+                    and not is_cooldown_exempt(message.author)):
                 remaining = timedelta(hours=rv_cd) - (now - last)
                 await message.channel.send(
                     f"{message.author.mention}, [Random Vow] cooldown remaining: **{str(remaining).split('.')[0]}** (rolled {rv_cd_raw:.2f}h)"
@@ -3517,7 +3590,7 @@ async def on_message(message):
         elif vow == "Miracle Vow":
             miracle_cd = apply_vote_discount(base_cd * 2.5, uid)
             last = last_kill_used.get((gid, uid)) if action == "kill" else last_save_used.get((gid, uid))
-            if last and now - last < timedelta(hours=miracle_cd):
+            if last and now - last < timedelta(hours=miracle_cd) and not is_cooldown_exempt(message.author):
                 remaining = timedelta(hours=miracle_cd) - (now - last)
                 await message.channel.send(
                     f"{message.author.mention}, [Miracle Vow] cooldown remaining: **{str(remaining).split('.')[0]}**{vote_note(uid)}"
@@ -3527,7 +3600,7 @@ async def on_message(message):
 
         # Ragebait Vow
         elif vow == "Ragebait Vow":
-            if is_ragebait_on_cd(gid, uid, now):
+            if is_ragebait_on_cd(gid, uid, now) and not is_cooldown_exempt(message.author):
                 remaining = get_ragebait_remaining(gid, uid, now)
                 await message.channel.send(
                     f"{message.author.mention}, [Ragebait Vow] ability on cooldown: **{str(remaining).split('.')[0]}**{vote_note(uid)}"
@@ -3556,7 +3629,7 @@ async def on_message(message):
 
             last = last_kill_used.get((gid, uid)) if action == "kill" else last_save_used.get((gid, uid))
 
-            if effective_cd > 0 and last:
+            if effective_cd > 0 and last and not is_cooldown_exempt(message.author):
                 if now - last < timedelta(hours=effective_cd):
                     remaining = timedelta(hours=effective_cd) - (now - last)
 

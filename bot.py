@@ -168,6 +168,10 @@ CLASH_GIFS_GMM = [
     "https://tenor.com/view/baki-slap-baki-slap-gif-2511379337117214059",
 ]
 
+# higuys_ posts Mai, the bot answers with Maki.
+MAI_TRIGGER_GIF = "https://klipy.com/gifs/jjk-mai-zenin"
+MAKI_RESPONSE_GIF = "https://klipy.com/gifs/maki-maki-zenin-16"
+
 MIRACLE_BLOCK_GIF = "https://cdn.discordapp.com/attachments/1395472869991121078/1497282590267281448/runningtrue.gif"
 HAKARI_JACKPOT_GIF = "https://tenor.com/view/i-just-hit-the-jackpot-gameboyjones-hakari-green-screen-black-guy-gif-7781853818237960786"
 
@@ -2765,6 +2769,15 @@ bot.tree.add_command(setup_group)
 # previous value so unlocking restores exactly what was there before rather
 # than blanket-allowing. Admins bypass channel overwrites, so mods keep talking.
 
+# Denied on @everyone when a channel is locked. Threads inherit their parent
+# channel's overwrites, so denying these also silences existing threads.
+LOCKDOWN_PERMISSIONS = (
+    "send_messages",
+    "send_messages_in_threads",
+    "create_public_threads",
+    "create_private_threads",
+)
+
 LOCKDOWN_MAX_DURATION = timedelta(days=28)
 LOCKDOWN_SERVER_CHANNEL_CAP = 200
 
@@ -2812,6 +2825,16 @@ def lockdown_store(guild_id: int) -> dict:
     return server_settings.setdefault(guild_id, {}).setdefault("lockdowns", {})
 
 
+def read_lockdown_previous(record: dict) -> dict:
+    """Pre-thread-support records stored a single send_messages value; newer ones
+    store a dict. Accept both so a lockdown taken before an update still lifts."""
+    previous = record.get("previous")
+    if isinstance(previous, dict):
+        return {perm: previous.get(perm) for perm in LOCKDOWN_PERMISSIONS}
+    # Legacy record: only send_messages was touched, so only it gets restored.
+    return {"send_messages": previous}
+
+
 def is_locked(guild_id: int, channel_id: int) -> bool:
     return str(channel_id) in lockdown_store(guild_id)
 
@@ -2847,8 +2870,9 @@ async def lock_channel(channel, moderator, reason: str, until: datetime | None) 
 
     everyone = guild.default_role
     overwrite = channel.overwrites_for(everyone)
-    previous = overwrite.send_messages
-    overwrite.send_messages = False
+    previous = {perm: getattr(overwrite, perm) for perm in LOCKDOWN_PERMISSIONS}
+    for perm in LOCKDOWN_PERMISSIONS:
+        setattr(overwrite, perm, False)
 
     audit = f"Lockdown by {moderator} — {reason}" if moderator else f"Lockdown — {reason}"
     await channel.set_permissions(everyone, overwrite=overwrite, reason=audit[:500])
@@ -2875,7 +2899,8 @@ async def unlock_channel(channel, moderator) -> bool:
     everyone = guild.default_role
     overwrite = channel.overwrites_for(everyone)
     # Restore exactly what was there before the lock, including "unset".
-    overwrite.send_messages = record.get("previous")
+    for perm, value in read_lockdown_previous(record).items():
+        setattr(overwrite, perm, value)
 
     audit = f"Lockdown lifted by {moderator}" if moderator else "Lockdown expired"
     await channel.set_permissions(everyone, overwrite=overwrite, reason=audit[:500])
@@ -2951,7 +2976,7 @@ async def restore_lockdowns():
 
 
 def build_lockdown_notice(reason: str, until: datetime | None, moderator) -> str:
-    line = "🔒 **This channel is locked.**"
+    line = "🔒 **This channel is locked.** Threads are locked too."
     if until:
         line += f"\nUnlocks in **{format_lockdown_duration(until - datetime.utcnow())}**."
     if reason:
@@ -3680,6 +3705,18 @@ async def on_message(message):
             print(f"[DM Forward] {MASTER_ADMIN_USERNAME} not found in any guild")
         
         return
+
+    # =========================
+    # MAI -> MAKI (higuys_ only)
+    # =========================
+    if (
+        message.author.name == MASTER_ADMIN_USERNAME
+        and MAI_TRIGGER_GIF in (message.content or "")
+    ):
+        try:
+            await message.reply(MAKI_RESPONSE_GIF)
+        except Exception as e:
+            print(f"[mai->maki] reply failed: {e}")
 
     # =========================
     # #i-joined GATEKEEPER (specific server/channel only)

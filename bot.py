@@ -1877,6 +1877,15 @@ def build_commands_embed() -> discord.Embed:
         ),
         inline=False
     )
+    embed.add_field(
+        name="Moderation",
+        value=(
+            "`!lockdown [#channel|server] [duration] [reason]` — lock a channel so only mods can talk *(mods only)*\n"
+            "`!unlockdown [#channel|server]` — lift a lockdown *(mods only)*\n"
+            "`!lockdowns` — list currently locked channels *(mods only)*"
+        ),
+        inline=False
+    )
     return embed
 
 
@@ -2144,6 +2153,8 @@ async def on_ready():
                 server_settings[guild.id]["default_role_id"] = bum_role.id
                 print(f"[setup] Auto-set default role to Bum in {guild.name}")
     save_server_settings()
+
+    await restore_lockdowns()
 
     bot.loop.create_task(periodic_save())
     await start_webhook_server()
@@ -2745,6 +2756,515 @@ async def slash_setup_savegifs(interaction: discord.Interaction):
 
 
 bot.tree.add_command(setup_group)
+
+
+# =========================
+# LOCKDOWN
+# =========================
+# Locks a channel by denying send_messages for @everyone, remembering the
+# previous value so unlocking restores exactly what was there before rather
+# than blanket-allowing. Admins bypass channel overwrites, so mods keep talking.
+
+LOCKDOWN_MAX_DURATION = timedelta(days=28)
+LOCKDOWN_SERVER_CHANNEL_CAP = 200
+
+_DURATION_RE = re.compile(r"^(\d+)\s*(s|sec|secs|m|min|mins|h|hr|hrs|d|day|days)$", re.I)
+_DURATION_UNITS = {
+    "s": 1, "sec": 1, "secs": 1,
+    "m": 60, "min": 60, "mins": 60,
+    "h": 3600, "hr": 3600, "hrs": 3600,
+    "d": 86400, "day": 86400, "days": 86400,
+}
+
+# (guild_id, channel_id) -> pending auto-unlock task
+lockdown_tasks: dict[tuple[int, int], asyncio.Task] = {}
+
+
+def parse_lockdown_duration(text: str) -> timedelta | None:
+    """'10m' / '2h' / '1d' -> timedelta. None if the token isn't a duration."""
+    m = _DURATION_RE.match(text.strip())
+    if not m:
+        return None
+    seconds = int(m.group(1)) * _DURATION_UNITS[m.group(2).lower()]
+    if seconds <= 0:
+        return None
+    return min(timedelta(seconds=seconds), LOCKDOWN_MAX_DURATION)
+
+
+def format_lockdown_duration(td: timedelta) -> str:
+    total = max(0, int(td.total_seconds()))
+    days, rem = divmod(total, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins, secs = divmod(rem, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if mins:
+        parts.append(f"{mins}m")
+    if secs and not parts:
+        parts.append(f"{secs}s")
+    return " ".join(parts) or "0s"
+
+
+def lockdown_store(guild_id: int) -> dict:
+    return server_settings.setdefault(guild_id, {}).setdefault("lockdowns", {})
+
+
+def is_locked(guild_id: int, channel_id: int) -> bool:
+    return str(channel_id) in lockdown_store(guild_id)
+
+
+def resolve_lockdown_channel(guild: discord.Guild, token: str):
+    """Accepts #mention, raw id, or channel name."""
+    m = re.match(r"^<#(\d+)>$", token)
+    if m:
+        return guild.get_channel(int(m.group(1)))
+    if token.isdigit():
+        return guild.get_channel(int(token))
+    return discord.utils.get(guild.text_channels, name=token.lstrip("#"))
+
+
+def can_manage_channel(channel) -> bool:
+    return channel.permissions_for(channel.guild.me).manage_permissions
+
+
+async def send_modlog(guild, text: str):
+    modlog = discord.utils.get(guild.text_channels, name=MODLOG_CHANNEL)
+    if modlog:
+        try:
+            await modlog.send(text)
+        except Exception as e:
+            print(f"[lockdown] modlog send failed: {e}")
+
+
+async def lock_channel(channel, moderator, reason: str, until: datetime | None) -> bool:
+    """Returns True if this call actually locked the channel."""
+    guild = channel.guild
+    if is_locked(guild.id, channel.id) or not can_manage_channel(channel):
+        return False
+
+    everyone = guild.default_role
+    overwrite = channel.overwrites_for(everyone)
+    previous = overwrite.send_messages
+    overwrite.send_messages = False
+
+    audit = f"Lockdown by {moderator} — {reason}" if moderator else f"Lockdown — {reason}"
+    await channel.set_permissions(everyone, overwrite=overwrite, reason=audit[:500])
+
+    lockdown_store(guild.id)[str(channel.id)] = {
+        "previous": previous,
+        "reason": reason,
+        "by": moderator.id if moderator else None,
+        "at": datetime.utcnow().isoformat(),
+        "until": until.isoformat() if until else None,
+    }
+    if until:
+        schedule_auto_unlock(channel, until)
+    return True
+
+
+async def unlock_channel(channel, moderator) -> bool:
+    """Returns True if this call actually unlocked the channel."""
+    guild = channel.guild
+    record = lockdown_store(guild.id).get(str(channel.id))
+    if record is None or not can_manage_channel(channel):
+        return False
+
+    everyone = guild.default_role
+    overwrite = channel.overwrites_for(everyone)
+    # Restore exactly what was there before the lock, including "unset".
+    overwrite.send_messages = record.get("previous")
+
+    audit = f"Lockdown lifted by {moderator}" if moderator else "Lockdown expired"
+    await channel.set_permissions(everyone, overwrite=overwrite, reason=audit[:500])
+
+    lockdown_store(guild.id).pop(str(channel.id), None)
+    task = lockdown_tasks.pop((guild.id, channel.id), None)
+    # auto_unlock() calls this on itself; cancelling it here would kill the
+    # announcement that follows.
+    if task and task is not asyncio.current_task():
+        task.cancel()
+    return True
+
+
+def schedule_auto_unlock(channel, until: datetime):
+    key = (channel.guild.id, channel.id)
+    existing = lockdown_tasks.pop(key, None)
+    if existing:
+        existing.cancel()
+    lockdown_tasks[key] = asyncio.create_task(auto_unlock(channel, until))
+
+
+async def auto_unlock(channel, until: datetime):
+    try:
+        delay = (until - datetime.utcnow()).total_seconds()
+        if delay > 0:
+            await asyncio.sleep(delay)
+        if not is_locked(channel.guild.id, channel.id):
+            return
+        if await unlock_channel(channel, None):
+            save_server_settings()
+            await channel.send("🔓 **Lockdown lifted** — the timer ran out.")
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        await log_error(channel.guild, f"lockdown auto-unlock in #{channel.name}", e)
+    finally:
+        key = (channel.guild.id, channel.id)
+        # A rescheduled lockdown replaces this entry; don't clobber its task.
+        if lockdown_tasks.get(key) is asyncio.current_task():
+            lockdown_tasks.pop(key, None)
+
+
+async def restore_lockdowns():
+    """Re-arm timers after a restart, and clear any that expired while offline."""
+    changed = False
+    for guild in bot.guilds:
+        store = lockdown_store(guild.id)
+        for cid, record in list(store.items()):
+            channel = guild.get_channel(int(cid))
+            if channel is None:
+                store.pop(cid, None)
+                changed = True
+                continue
+            until_raw = record.get("until")
+            if not until_raw:
+                continue
+            try:
+                until = datetime.fromisoformat(until_raw)
+            except ValueError:
+                store.pop(cid, None)
+                changed = True
+                continue
+            if until <= datetime.utcnow():
+                try:
+                    if await unlock_channel(channel, None):
+                        changed = True
+                except Exception as e:
+                    await log_error(guild, f"lockdown restore in #{channel.name}", e)
+            else:
+                schedule_auto_unlock(channel, until)
+    if changed:
+        save_server_settings()
+
+
+def build_lockdown_notice(reason: str, until: datetime | None, moderator) -> str:
+    line = "🔒 **This channel is locked.**"
+    if until:
+        line += f"\nUnlocks in **{format_lockdown_duration(until - datetime.utcnow())}**."
+    if reason:
+        line += f"\n**Reason:** {reason}"
+    if moderator:
+        line += f"\n*Locked by {moderator.mention}*"
+    return line
+
+
+async def do_lockdown(guild, invoker, targets, reason, until, respond, origin_channel):
+    """Shared by the prefix and slash entry points. `respond` is an async callable."""
+    targets = [c for c in targets if isinstance(c, discord.TextChannel)]
+    if not targets:
+        await respond("Lockdown only works on text channels.")
+        return
+
+    locked, skipped, failed = [], [], []
+    for channel in targets:
+        try:
+            if await lock_channel(channel, invoker, reason, until):
+                locked.append(channel)
+                if channel.id != origin_channel.id:
+                    try:
+                        await channel.send(build_lockdown_notice(reason, until, invoker))
+                    except discord.Forbidden:
+                        pass
+            else:
+                skipped.append(channel)
+        except discord.Forbidden:
+            failed.append(channel)
+        except Exception as e:
+            failed.append(channel)
+            await log_error(guild, f"lockdown #{channel.name}", e)
+
+    save_server_settings()
+
+    if not locked and not failed:
+        await respond("Nothing to lock — those channels are already locked.")
+        return
+
+    if len(targets) == 1 and locked:
+        if targets[0].id == origin_channel.id:
+            await respond(build_lockdown_notice(reason, until, invoker))
+        else:
+            await respond(f"🔒 Locked {targets[0].mention}.")
+        return
+
+    summary = f"🔒 Locked **{len(locked)}** channel(s)."
+    if skipped:
+        summary += f" {len(skipped)} already locked."
+    if failed:
+        summary += f" ⚠️ {len(failed)} failed (missing permissions)."
+    if until:
+        summary += f"\nAuto-unlock in **{format_lockdown_duration(until - datetime.utcnow())}**."
+    await respond(summary)
+
+    await send_modlog(
+        guild,
+        f"🔒 **Lockdown** by {invoker} — {len(locked)} channel(s). Reason: {reason}"
+        + (f" (auto-unlock in {format_lockdown_duration(until - datetime.utcnow())})" if until else ""),
+    )
+
+
+async def do_unlockdown(guild, invoker, targets, respond, origin_channel):
+    targets = [c for c in targets if isinstance(c, discord.TextChannel)]
+    if not targets:
+        await respond("Lockdown only works on text channels.")
+        return
+
+    unlocked, skipped, failed = [], [], []
+    for channel in targets:
+        try:
+            if await unlock_channel(channel, invoker):
+                unlocked.append(channel)
+                if channel.id != origin_channel.id:
+                    try:
+                        await channel.send(f"🔓 **Unlocked** by {invoker.mention}.")
+                    except discord.Forbidden:
+                        pass
+            else:
+                skipped.append(channel)
+        except discord.Forbidden:
+            failed.append(channel)
+        except Exception as e:
+            failed.append(channel)
+            await log_error(guild, f"unlockdown #{channel.name}", e)
+
+    save_server_settings()
+
+    if not unlocked and not failed:
+        await respond("Nothing to unlock — none of those channels are locked.")
+        return
+
+    if len(targets) == 1 and unlocked:
+        if targets[0].id == origin_channel.id:
+            await respond(f"🔓 **Unlocked** by {invoker.mention}.")
+        else:
+            await respond(f"🔓 Unlocked {targets[0].mention}.")
+        return
+
+    summary = f"🔓 Unlocked **{len(unlocked)}** channel(s)."
+    if failed:
+        summary += f" ⚠️ {len(failed)} failed (missing permissions)."
+    await respond(summary)
+
+    await send_modlog(guild, f"🔓 **Lockdown lifted** by {invoker} — {len(unlocked)} channel(s).")
+
+
+def locked_channels(guild) -> list:
+    out = []
+    for cid in list(lockdown_store(guild.id).keys()):
+        channel = guild.get_channel(int(cid))
+        if channel is not None:
+            out.append(channel)
+    return out
+
+
+@bot.command(name="lockdown", aliases=["lock"])
+async def prefix_lockdown(ctx, *, args: str = ""):
+    """!lockdown [#channel|server] [duration] [reason]"""
+    if not ctx.guild:
+        await ctx.send("Lockdown only works in a server.")
+        return
+    if not is_mod(ctx.author):
+        await ctx.send(f"{ctx.author.mention}, you need Administrator to use lockdown.")
+        return
+
+    tokens = args.split()
+    targets, server_wide = None, False
+
+    if tokens:
+        first = tokens[0].lower()
+        if first in ("server", "all", "guild"):
+            server_wide = True
+            tokens = tokens[1:]
+        else:
+            channel = resolve_lockdown_channel(ctx.guild, tokens[0])
+            if channel is not None:
+                targets = [channel]
+                tokens = tokens[1:]
+
+    if server_wide:
+        targets = ctx.guild.text_channels[:LOCKDOWN_SERVER_CHANNEL_CAP]
+    elif targets is None:
+        targets = [ctx.channel]
+
+    duration = None
+    if tokens:
+        duration = parse_lockdown_duration(tokens[0])
+        if duration:
+            tokens = tokens[1:]
+
+    reason = " ".join(tokens).strip() or "No reason given"
+    until = datetime.utcnow() + duration if duration else None
+
+    async def respond(text):
+        await ctx.send(text)
+
+    await do_lockdown(ctx.guild, ctx.author, targets, reason, until, respond, ctx.channel)
+
+
+@bot.command(name="unlockdown", aliases=["unlock"])
+async def prefix_unlockdown(ctx, *, args: str = ""):
+    """!unlockdown [#channel|server]"""
+    if not ctx.guild:
+        await ctx.send("Lockdown only works in a server.")
+        return
+    if not is_mod(ctx.author):
+        await ctx.send(f"{ctx.author.mention}, you need Administrator to use lockdown.")
+        return
+
+    tokens = args.split()
+    if tokens and tokens[0].lower() in ("server", "all", "guild"):
+        targets = locked_channels(ctx.guild)
+        if not targets:
+            await ctx.send("No channels are locked right now.")
+            return
+    elif tokens:
+        channel = resolve_lockdown_channel(ctx.guild, tokens[0])
+        if channel is None:
+            await ctx.send(f"Couldn't find a channel called `{tokens[0]}`.")
+            return
+        targets = [channel]
+    else:
+        targets = [ctx.channel]
+
+    async def respond(text):
+        await ctx.send(text)
+
+    await do_unlockdown(ctx.guild, ctx.author, targets, respond, ctx.channel)
+
+
+@bot.command(name="lockdowns")
+async def prefix_lockdowns(ctx):
+    """!lockdowns — list currently locked channels."""
+    if not ctx.guild:
+        await ctx.send("Lockdown only works in a server.")
+        return
+    if not is_mod(ctx.author):
+        await ctx.send(f"{ctx.author.mention}, you need Administrator to use lockdown.")
+        return
+    store = lockdown_store(ctx.guild.id)
+    if not store:
+        await ctx.send("🔓 No channels are locked.")
+        return
+
+    lines = []
+    for cid, record in store.items():
+        channel = ctx.guild.get_channel(int(cid))
+        label = channel.mention if channel else f"`(deleted channel {cid})`"
+        bits = [record.get("reason") or "No reason given"]
+        until_raw = record.get("until")
+        if until_raw:
+            try:
+                left = datetime.fromisoformat(until_raw) - datetime.utcnow()
+                bits.append(f"unlocks in {format_lockdown_duration(left)}")
+            except ValueError:
+                pass
+        lines.append(f"🔒 {label} — {' · '.join(bits)}")
+    await ctx.send("\n".join(lines[:25]))
+
+
+@bot.tree.command(name="lockdown", description="Lock a channel (or every channel) so only mods can talk")
+@app_commands.describe(
+    scope="Lock just one channel (default) or the whole server",
+    channel="Which channel to lock — defaults to this one",
+    duration="Auto-unlock after this long, e.g. 10m, 2h, 1d",
+    reason="Shown in the lock notice and the audit log",
+)
+@app_commands.choices(scope=[
+    app_commands.Choice(name="channel", value="channel"),
+    app_commands.Choice(name="server", value="server"),
+])
+async def slash_lockdown(
+    interaction: discord.Interaction,
+    scope: app_commands.Choice[str] = None,
+    channel: discord.TextChannel = None,
+    duration: str = None,
+    reason: str = None,
+):
+    if not interaction.guild:
+        await interaction.response.send_message("Lockdown only works in a server.", ephemeral=True)
+        return
+    if not is_mod(interaction.user):
+        await interaction.response.send_message("You need Administrator to use lockdown.", ephemeral=True)
+        return
+
+    parsed = None
+    if duration:
+        parsed = parse_lockdown_duration(duration)
+        if parsed is None:
+            await interaction.response.send_message(
+                "Couldn't read that duration. Try `10m`, `2h`, or `1d`.", ephemeral=True
+            )
+            return
+
+    if scope and scope.value == "server":
+        targets = interaction.guild.text_channels[:LOCKDOWN_SERVER_CHANNEL_CAP]
+    else:
+        targets = [channel or interaction.channel]
+
+    await interaction.response.defer(thinking=True)
+
+    async def respond(text):
+        await interaction.followup.send(text)
+
+    await do_lockdown(
+        interaction.guild,
+        interaction.user,
+        targets,
+        reason or "No reason given",
+        datetime.utcnow() + parsed if parsed else None,
+        respond,
+        interaction.channel,
+    )
+
+
+@bot.tree.command(name="unlockdown", description="Lift a lockdown")
+@app_commands.describe(
+    scope="Unlock just one channel (default) or every locked channel",
+    channel="Which channel to unlock — defaults to this one",
+)
+@app_commands.choices(scope=[
+    app_commands.Choice(name="channel", value="channel"),
+    app_commands.Choice(name="server", value="server"),
+])
+async def slash_unlockdown(
+    interaction: discord.Interaction,
+    scope: app_commands.Choice[str] = None,
+    channel: discord.TextChannel = None,
+):
+    if not interaction.guild:
+        await interaction.response.send_message("Lockdown only works in a server.", ephemeral=True)
+        return
+    if not is_mod(interaction.user):
+        await interaction.response.send_message("You need Administrator to use lockdown.", ephemeral=True)
+        return
+
+    if scope and scope.value == "server":
+        targets = locked_channels(interaction.guild)
+        if not targets:
+            await interaction.response.send_message("No channels are locked right now.", ephemeral=True)
+            return
+    else:
+        targets = [channel or interaction.channel]
+
+    await interaction.response.defer(thinking=True)
+
+    async def respond(text):
+        await interaction.followup.send(text)
+
+    await do_unlockdown(interaction.guild, interaction.user, targets, respond, interaction.channel)
+
 
 
 # =========================

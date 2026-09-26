@@ -2862,7 +2862,7 @@ async def send_modlog(guild, text: str):
             print(f"[lockdown] modlog send failed: {e}")
 
 
-async def lock_channel(channel, moderator, reason: str, until: datetime | None) -> bool:
+async def lock_channel(channel, moderator, reason: str, until: datetime | None, announced: bool = True) -> bool:
     """Returns True if this call actually locked the channel."""
     guild = channel.guild
     if is_locked(guild.id, channel.id) or not can_manage_channel(channel):
@@ -2879,6 +2879,7 @@ async def lock_channel(channel, moderator, reason: str, until: datetime | None) 
 
     lockdown_store(guild.id)[str(channel.id)] = {
         "previous": previous,
+        "announced": announced,
         "reason": reason,
         "by": moderator.id if moderator else None,
         "at": datetime.utcnow().isoformat(),
@@ -2929,9 +2930,14 @@ async def auto_unlock(channel, until: datetime):
             await asyncio.sleep(delay)
         if not is_locked(channel.guild.id, channel.id):
             return
+        # Stay quiet in channels that were locked silently as part of a
+        # server-wide lock, otherwise every channel pings at once on expiry.
+        record = lockdown_store(channel.guild.id).get(str(channel.id)) or {}
+        announced = record.get("announced", True)
         if await unlock_channel(channel, None):
             save_server_settings()
-            await channel.send("🔓 **Lockdown lifted** — the timer ran out.")
+            if announced:
+                await channel.send("🔓 **Lockdown lifted** — the timer ran out.")
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -2993,12 +2999,17 @@ async def do_lockdown(guild, invoker, targets, reason, until, respond, origin_ch
         await respond("Lockdown only works on text channels.")
         return
 
+    # Only announce in the channel itself for a single-channel lock. A
+    # server-wide lock would otherwise ping every channel at once; those get
+    # one summary where the command was run instead.
+    announce_in_channel = len(targets) == 1
+
     locked, skipped, failed = [], [], []
     for channel in targets:
         try:
-            if await lock_channel(channel, invoker, reason, until):
+            if await lock_channel(channel, invoker, reason, until, announce_in_channel):
                 locked.append(channel)
-                if channel.id != origin_channel.id:
+                if announce_in_channel and channel.id != origin_channel.id:
                     try:
                         await channel.send(build_lockdown_notice(reason, until, invoker))
                     except discord.Forbidden:
@@ -3046,12 +3057,14 @@ async def do_unlockdown(guild, invoker, targets, respond, origin_channel):
         await respond("Lockdown only works on text channels.")
         return
 
+    announce_in_channel = len(targets) == 1
+
     unlocked, skipped, failed = [], [], []
     for channel in targets:
         try:
             if await unlock_channel(channel, invoker):
                 unlocked.append(channel)
-                if channel.id != origin_channel.id:
+                if announce_in_channel and channel.id != origin_channel.id:
                     try:
                         await channel.send(f"🔓 **Unlocked** by {invoker.mention}.")
                     except discord.Forbidden:
